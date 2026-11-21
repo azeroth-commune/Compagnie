@@ -92,6 +92,16 @@ assert(loadfile("Compagnie/Membres.lua"))("Compagnie", ns)
 local V, L, M, Z = "Player-1-0000000V", "Player-1-0000000L", "Player-1-0000000M", "Player-1-0000000Z"
 local NOMS = { [V] = "Virgile Marteau", [L] = "Léo Lame", [M] = "Mira Feuille", [Z] = "Zoé Pierre" }
 local clients
+local file -- une table : les messages attendent livrer() (des envois qui se croisent) ; nil : livrés tout de suite
+local function distribuer(de, texte)
+  for _, autre in pairs(clients) do
+    if autre ~= de then ns.recevoir(autre.e, autre.moi, autre.groupe, de.moi, texte, autre.io) end
+  end
+end
+local function livrer()
+  while #file > 0 do distribuer(unpack(table.remove(file, 1))) end
+  file = nil
+end
 local function groupeDe(moi, guids)
   local g = { { guid = moi, nom = NOMS[moi] } }
   for _, x in ipairs(guids) do if x ~= moi then g[#g + 1] = { guid = x, nom = NOMS[x] } end end
@@ -103,9 +113,7 @@ local function client(moi, guids)
   cl.io = {
     envoyer = function(texte)
       cl.envoyes[#cl.envoyes + 1] = texte
-      for _, autre in pairs(clients) do
-        if autre ~= cl then ns.recevoir(autre.e, autre.moi, autre.groupe, moi, texte, autre.io) end
-      end
+      if file then file[#file + 1] = { cl, texte } else distribuer(cl, texte) end
     end,
     dire = function(texte) cl.dits[#cl.dits + 1] = texte end,
     proposer = function() cl.propositions = cl.propositions + 1 end,
@@ -214,5 +222,39 @@ for _, texte in ipairs({ "", "Z", "P", "P;", "A;;", ";;;", "P;id;", ("x"):rep(30
   ns.recevoir(t[L].e, L, t[L].groupe, V, texte, t[L].io)
 end
 assert(noms(t[L]) == "Virgile Marteau,Léo Lame", "messages mal formés : rien ne change")
+
+-- Léo fonde la sienne pendant que la proposition de Virgile est encore ouverte chez lui, et Mira l'accepte ; puis Léo
+-- clique « Accepter » sur celle de Virgile : il est déjà membre, sa réponse est non. Personne n'est dans deux Compagnies.
+c = groupe({ V, L, M })
+ns.fonder(c[V].e, V, c[V].groupe, "idV", c[V].io)
+assert(ns.fonder(c[L].e, L, c[L].groupe, "idL", c[L].io), "Léo peut fonder : il n'a pas répondu à Virgile")
+assert(dit(c[L], "Virgile Marteau a déjà une fondation en cours"), "Virgile, qui fonde, refuse d'office : " .. dernier(c[L]))
+ns.repondre(c[M].e, true, c[M].io) -- Mira accepte celle de Léo, la plus récente
+ns.cloturer(c[L].e, L, c[L].groupe, c[L].io) -- le délai de Léo, s'il attend encore une réponse
+assert(noms(c[L]) == "Léo Lame,Mira Feuille" and noms(c[M]) == "Léo Lame,Mira Feuille", "Léo et Mira : " .. noms(c[L]))
+ns.repondre(c[L].e, true, c[L].io) -- « Accepter » sur la proposition de Virgile, restée ouverte
+assert(c[L].envoyes[#c[L].envoyes] == "R;idV;deja", "Léo, déjà membre, répond non : " .. c[L].envoyes[#c[L].envoyes])
+assert(dernier(c[L]):find("Tu es déjà membre d'une Compagnie", 1, true), dernier(c[L]))
+assert(dit(c[V], "Léo Lame est déjà membre d'une Compagnie"), dernier(c[V]))
+ns.cloturer(c[V].e, V, c[V].groupe, c[V].io) -- le délai de Virgile : Mira ne lui a pas répondu
+assert(c[V].e.db.compagnie == nil, "chez Virgile, pas de Compagnie avec Léo : " .. noms(c[V]))
+assert(c[L].e.db.compagnie.id == "idL", "Léo reste dans la sienne")
+
+-- Deux fondateurs se croisent : Virgile et Léo fondent au même moment, chacun reçoit la proposition de l'autre pendant
+-- la sienne et la refuse d'office ; leurs acceptations ne peuvent pas se croiser, aucune Compagnie n'est fondée.
+c = groupe({ V, L })
+file = {}
+ns.fonder(c[V].e, V, c[V].groupe, "idV", c[V].io)
+ns.fonder(c[L].e, L, c[L].groupe, "idL", c[L].io)
+livrer() -- les deux propositions arrivent
+file = {}
+ns.repondre(c[V].e, true, c[V].io) -- chacun accepte celle de l'autre, au même moment
+ns.repondre(c[L].e, true, c[L].io)
+livrer()
+ns.cloturer(c[V].e, V, c[V].groupe, c[V].io)
+ns.cloturer(c[L].e, L, c[L].groupe, c[L].io)
+assert(c[V].e.db.compagnie == nil and c[L].e.db.compagnie == nil, "aucune Compagnie : " .. noms(c[V]) .. " / " .. noms(c[L]))
+assert(dit(c[V], "Léo Lame a déjà une fondation en cours") and dit(c[L], "Virgile Marteau a déjà une fondation en cours"),
+  "chacun apprend pourquoi : " .. dernier(c[V]) .. " / " .. dernier(c[L]))
 
 print("Compagnie : membres de la Compagnie OK")

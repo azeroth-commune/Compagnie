@@ -6,7 +6,8 @@
 --   io     : { envoyer = fn(texte) au groupe du jeu, dire = fn(texte) au joueur, proposer = fn(proposition), maj = fn() }
 -- La Compagnie (donnée propre) : db.compagnie = { id, membres = { { guid, nom }, … } }, de 2 à 5 membres.
 -- Messages d'add-on, envoyés au groupe du jeu (jamais chuchotés) : « verbe;id[;GUID,GUID…] »
---   P;id;liste  proposition, le fondateur d'abord     A;id  j'accepte     R;id[;deja]  je refuse (déjà membre)
+--   P;id;liste  proposition, le fondateur d'abord     A;id  j'accepte
+--   R;id[;deja|occupe]  je refuse (déjà membre, ou une fondation en cours pour moi)
 --   F;id;liste  la Compagnie fondée                    Q;id  je quitte     X;id;GUID    je retire ce membre
 -- L'expéditeur (de) est le GUID que le serveur donne pour son nom dans le groupe, jamais pris dans le message. Un message
 -- d'un non-membre est ignoré, sauf une proposition qui me nomme, venue de son fondateur. Donnée reçue telle quelle
@@ -35,6 +36,14 @@ local function noms(c)
   local t = {}
   for i, m in ipairs(c.membres) do t[i] = m.nom end
   return table.concat(t, ", ")
+end
+
+-- Déjà engagé : membre d'une Compagnie (« deja »), ou ma propre fondation en cours (« occupe »). Un personnage engagé
+-- n'accepte pas et refuse d'office une proposition reçue : il n'est jamais compté dans deux Compagnies, même quand deux
+-- fondateurs se croisent (chacun refuse celle de l'autre).
+local function engage(e)
+  if e.db.compagnie then return "deja" end
+  if e.fondation then return "occupe" end
 end
 
 -- Fonder depuis mon groupe du jeu : la proposition part vers les autres. nil, raison si c'est refusé.
@@ -68,10 +77,18 @@ function ns.cloturer(e, moi, groupe, io)
   io.maj()
 end
 
--- Ma réponse à la proposition reçue. Déjà membre : rien à répondre (le refus est parti à la réception).
+-- Ma réponse à la proposition reçue. Déjà membre à la réception : rien à répondre (le refus est parti). Devenu membre,
+-- ou fondateur, depuis la réception : « Accepter » répond non.
 function ns.repondre(e, oui, io)
   local p = e.proposition
   if not p or p.deja or p.accepte then return end
+  local r = oui and engage(e)
+  if r then
+    e.proposition = nil
+    io.envoyer("R;" .. p.id .. ";" .. r)
+    return io.dire((r == "deja" and "Tu es déjà membre d'une Compagnie" or "Ta propre proposition est en cours")
+      .. " : ta réponse à " .. p.nom .. " est non.")
+  end
   if oui then p.accepte = true else e.proposition = nil end
   io.envoyer((oui and "A;" or "R;") .. p.id)
 end
@@ -118,7 +135,12 @@ function ns.recevoir(e, moi, groupe, de, texte, io)
   if verbe == "P" then
     local guids = liste(arg)
     if guids[1] ~= de or not index(guids, moi) then return end -- seul le fondateur propose, à ceux qu'il nomme
-    e.proposition = { id = id, de = de, nom = nomDans(groupe, de), guids = guids, deja = c ~= nil }
+    local nom = nomDans(groupe, de)
+    if engage(e) == "occupe" then -- la fondation en cours n'est pas remplacée
+      io.envoyer("R;" .. id .. ";occupe")
+      return io.dire(nom .. " te propose de fonder une Compagnie : refusé d'office, ta propre proposition est en cours.")
+    end
+    e.proposition = { id = id, de = de, nom = nom, guids = guids, deja = c ~= nil }
     if c then io.envoyer("R;" .. id .. ";deja") end
     io.proposer(e.proposition)
   elseif verbe == "A" or verbe == "R" then
@@ -126,7 +148,8 @@ function ns.recevoir(e, moi, groupe, de, texte, io)
     if not (f and f.id == id and f.reponses[de] == false) then return end
     f.reponses[de] = verbe
     if verbe == "R" then
-      io.dire(nomDans(groupe, de) .. (arg == "deja" and " est déjà membre d'une Compagnie." or " refuse."))
+      io.dire(nomDans(groupe, de) .. (arg == "deja" and " est déjà membre d'une Compagnie."
+        or arg == "occupe" and " a déjà une fondation en cours." or " refuse."))
     end
     for _, r in pairs(f.reponses) do if r == false then return end end
     ns.cloturer(e, moi, groupe, io)
