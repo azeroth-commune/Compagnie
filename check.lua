@@ -67,4 +67,20 @@ assert(c.quetes[PATTES].aRendre == true and #c.quetes[PATTES].enAttente == 0, "r
 c = ns.calculer({ rendue, { nom = "Léo", niveau = 10, quetes = {}, rendues = { [PATTES] = true } } })
 assert(c.quetes[PATTES] == nil, "rendue par tous : plus dans les quêtes de la Compagnie")
 
+-- Le journal de Léo n'a pas encore tous les objectifs (pas encore chargé) : un objectif qui lui manque compte à 0,
+-- avec le texte et le total pris chez les autres ; l'avancement commun n'affiche jamais un objectif fini à tort.
+c = ns.calculer({
+  { nom = "Virgile", niveau = 10, quetes = { [CHASSE] = chasse(8, 4) } },
+  { nom = "Léo", niveau = 10, quetes = { [CHASSE] = { objectifs = { { texte = "Patte de loup", fait = 8, total = 8 } } } } },
+})
+o = c.quetes[CHASSE].objectifs
+assert(o[1].fait == 8, "pattes : 8/8 chez les deux")
+assert(o[2].fait == 0 and o[2].total == 4 and o[2].texte == "Croc de loup", "crocs absents du journal de Léo : 0/4")
+c = ns.calculer({
+  { nom = "Léo", niveau = 10, quetes = { [CHASSE] = { objectifs = {} } } },
+  { nom = "Virgile", niveau = 10, quetes = { [CHASSE] = chasse(8, 4) } },
+})
+o = c.quetes[CHASSE].objectifs
+assert(o[1].fait == 0 and o[2].fait == 0, "journal de Léo vide, même en premier : 0/8 et 0/4")
+
 print("Compagnie : calcul de la Compagnie OK")

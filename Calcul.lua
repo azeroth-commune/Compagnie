@@ -18,24 +18,27 @@ function ns.calculer(membres)
     for id in pairs(m.quetes or {}) do quetes[id] = { objectifs = {}, aRendre = true, enAttente = {} } end
   end
   for id, commune in pairs(quetes) do
-    local manquante = false
     for _, m in ipairs(membres) do
       local q = m.quetes and m.quetes[id]
-      if q then
-        for i, o in ipairs(q.objectifs) do
-          local c = commune.objectifs[i]
-          if not c or o.fait < c.fait then commune.objectifs[i] = { texte = o.texte, fait = o.fait, total = o.total } end
-        end
-      elseif not (m.rendues and m.rendues[id]) then
-        manquante = true
+      for i, o in ipairs(q and q.objectifs or {}) do
+        local c = commune.objectifs[i]
+        if not c or o.fait < c.fait then commune.objectifs[i] = { texte = o.texte, fait = o.fait, total = o.total } end
       end
       if not (q and q.finie or m.rendues and m.rendues[id]) then
         commune.aRendre = false
         commune.enAttente[#commune.enAttente + 1] = m.nom
       end
     end
+    -- Un objectif absent du journal d'un membre (quête pas encore chargée, ou pas de quête du tout) compte à 0.
     -- ponytail: sans la quête, un membre compte à 0 ; l'écart « quête à partager » (tranche suivante) dira quoi faire.
-    if manquante then for _, c in ipairs(commune.objectifs) do c.fait = 0 end end
+    for _, m in ipairs(membres) do
+      local q = m.quetes and m.quetes[id]
+      if q or not (m.rendues and m.rendues[id]) then
+        for i, c in ipairs(commune.objectifs) do
+          if not (q and q.objectifs and q.objectifs[i]) then c.fait = 0 end
+        end
+      end
+    end
   end
   return { niveau = niveau, quetes = quetes }
 end
