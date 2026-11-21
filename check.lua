@@ -257,4 +257,31 @@ assert(c[V].e.db.compagnie == nil and c[L].e.db.compagnie == nil, "aucune Compag
 assert(dit(c[V], "Léo Lame a déjà une fondation en cours") and dit(c[L], "Virgile Marteau a déjà une fondation en cours"),
   "chacun apprend pourquoi : " .. dernier(c[V]) .. " / " .. dernier(c[L]))
 
+-- Léo a accepté la proposition de Virgile et attend qu'elle soit fondée ; Mira propose la sienne entre-temps : Léo la
+-- refuse d'office (sa réponse à Virgile tient), puis la Compagnie de Virgile est fondée avec lui, chez les deux.
+c = groupe({ V, L, M })
+ns.fonder(c[V].e, V, c[V].groupe, "idV", c[V].io)
+ns.repondre(c[L].e, true, c[L].io)
+assert(ns.fonder(c[M].e, M, c[M].groupe, "idM", c[M].io), "Mira fonde : elle n'a pas répondu à Virgile")
+assert(c[L].envoyes[#c[L].envoyes] == "R;idM;occupe", "Léo refuse d'office : " .. c[L].envoyes[#c[L].envoyes])
+assert(dit(c[L], "refusé d'office, tu as déjà accepté celle de Virgile Marteau"), dernier(c[L]))
+assert(dit(c[M], "Léo Lame a déjà une fondation en cours"), dernier(c[M]))
+ns.cloturer(c[M].e, M, c[M].groupe, c[M].io) -- le délai de Mira, si elle attend encore
+ns.cloturer(c[V].e, V, c[V].groupe, c[V].io) -- le délai de Virgile : Mira ne lui a pas répondu
+assert(noms(c[V]) == "Virgile Marteau,Léo Lame", "chez Virgile : " .. noms(c[V]))
+assert(noms(c[L]) == "Virgile Marteau,Léo Lame", "chez Léo : " .. noms(c[L]))
+
+-- Une fondation en cours, la sienne ou acceptée, empêche de fonder ; une proposition acceptée que son fondateur n'a pas
+-- close (parti) expire au bout du délai, et Léo peut de nouveau fonder. Mira ne répond pas : Virgile attend.
+c = groupe({ V, L, M })
+ns.fonder(c[V].e, V, c[V].groupe, "idV", c[V].io)
+ok, raison = ns.fonder(c[V].e, V, c[V].groupe, "idV2", c[V].io)
+assert(not ok and raison:find("attends les réponses", 1, true), "Virgile a déjà proposé : " .. tostring(raison))
+ns.repondre(c[L].e, true, c[L].io)
+ok, raison = ns.fonder(c[L].e, L, c[L].groupe, "idL", c[L].io)
+assert(not ok and raison:find("Tu as accepté la proposition de Virgile Marteau", 1, true), "Léo a accepté : " .. tostring(raison))
+ns.expirer(c[L].e, "idV", c[L].io)
+assert(dernier(c[L]):find("La Compagnie proposée par Virgile Marteau n'a pas été fondée", 1, true), dernier(c[L]))
+assert(ns.fonder(c[L].e, L, c[L].groupe, "idL", c[L].io), "après l'expiration, Léo fonde")
+
 print("Compagnie : membres de la Compagnie OK")

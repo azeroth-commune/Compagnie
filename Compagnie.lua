@@ -40,7 +40,12 @@ local jeu = {
 StaticPopupDialogs.COMPAGNIE_PROPOSITION = {
   text = "%s te propose de fonder une Compagnie avec ce groupe : vous ferez l'aventure ensemble. En être membre ?",
   button1 = "Accepter", button2 = "Refuser",
-  OnAccept = function() ns.repondre(e, true, jeu) end,
+  OnAccept = function()
+    local id = e.proposition and e.proposition.id
+    ns.repondre(e, true, jeu)
+    -- le fondateur clôt au plus tard DELAI + 5 s après sa proposition : passé ce temps, plus de F à attendre
+    if id then C_Timer.After(DELAI + 10, function() ns.expirer(e, id, jeu) end) end
+  end,
   OnCancel = function() ns.repondre(e, false, jeu) end, -- aussi au bout du délai
   timeout = DELAI, whileDead = true, hideOnEscape = true,
   noCancelOnReuse = true, -- une 2e proposition remplace la 1re : pas de refus envoyé pour la nouvelle

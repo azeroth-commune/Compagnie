@@ -203,6 +203,23 @@ test("une proposition reçue : refuser, accepter puis fondée ; déjà membre, e
     CompagnieDB.compagnie = nil
 end)
 
+test("une proposition acceptée tient : une autre reçue avant la fondation est refusée d'office", function()
+    CompagnieDB.compagnie = nil
+    avecGroupe({ { LEO, "Léo", "Lame" }, { MIRA, "Mira", "Feuille" } }, false, function(envoyes)
+        recu("P;p5;" .. LEO .. "," .. moi().guid .. "," .. MIRA)
+        local _, popup = StaticPopup_Visible("COMPAGNIE_PROPOSITION")
+        popup.button1:Click() -- Accepter
+        assertEquals("A;p5", envoyes[#envoyes].texte)
+        local t = dits(function() recu("P;p6;" .. MIRA .. "," .. moi().guid .. "," .. LEO, "Mira Feuille") end)
+        assertEquals("R;p6;occupe", envoyes[#envoyes].texte)
+        assertTrue(t:find("refusé d'office, tu as déjà accepté celle de Léo Lame", 1, true) ~= nil, t)
+        assertNil(StaticPopup_Visible("COMPAGNIE_PROPOSITION"), "pas de nouvelle proposition affichée")
+        dits(function() recu("F;p5;" .. LEO .. "," .. moi().guid) end)
+        assertEquals("p5", CompagnieDB.compagnie.id)
+    end)
+    CompagnieDB.compagnie = nil
+end)
+
 test("une 2e proposition pendant que la 1re est affichée la remplace, et reste à répondre", function()
     CompagnieDB.compagnie = nil
     avecLeo(function(envoyes)

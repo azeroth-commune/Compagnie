@@ -38,17 +38,22 @@ local function noms(c)
   return table.concat(t, ", ")
 end
 
--- Déjà engagé : membre d'une Compagnie (« deja »), ou ma propre fondation en cours (« occupe »). Un personnage engagé
--- n'accepte pas et refuse d'office une proposition reçue : il n'est jamais compté dans deux Compagnies, même quand deux
--- fondateurs se croisent (chacun refuse celle de l'autre).
+-- Déjà engagé : membre d'une Compagnie (« deja »), ou une fondation en cours pour moi, la mienne ou celle que j'ai
+-- acceptée jusqu'à son F (« occupe »). Un personnage engagé ne fonde pas, n'accepte pas et refuse d'office une proposition
+-- reçue : il n'est jamais compté dans deux Compagnies, même quand deux fondateurs se croisent (chacun refuse celle de
+-- l'autre).
 local function engage(e)
   if e.db.compagnie then return "deja" end
-  if e.fondation then return "occupe" end
+  if e.fondation or (e.proposition and e.proposition.accepte) then return "occupe" end
 end
 
 -- Fonder depuis mon groupe du jeu : la proposition part vers les autres. nil, raison si c'est refusé.
 function ns.fonder(e, moi, groupe, id, io)
   if e.db.compagnie then return nil, "Tu es déjà membre d'une Compagnie : quitte-la avant d'en fonder une autre." end
+  if e.fondation then return nil, "Ta proposition est déjà partie : attends les réponses." end
+  if engage(e) then
+    return nil, ("Tu as accepté la proposition de %s : attends qu'elle soit fondée."):format(e.proposition.nom)
+  end
   if #groupe < 2 then return nil, "Fonder une Compagnie se fait depuis un groupe du jeu : forme d'abord un groupe avec tes compagnons." end
   if #groupe > ns.MAX then
     return nil, ("Une Compagnie a au plus %d membres : ton groupe compte %d personnages."):format(ns.MAX, #groupe)
@@ -91,6 +96,14 @@ function ns.repondre(e, oui, io)
   end
   if oui then p.accepte = true else e.proposition = nil end
   io.envoyer((oui and "A;" or "R;") .. p.id)
+end
+
+-- Une proposition acceptée sans F au bout du délai (le fondateur est parti sans clore) : elle n'engage plus.
+function ns.expirer(e, id, io)
+  local p = e.proposition
+  if not (p and p.id == id and p.accepte) then return end
+  e.proposition = nil
+  io.dire("La Compagnie proposée par " .. p.nom .. " n'a pas été fondée.")
 end
 
 -- Moins de deux membres : il n'y a plus de Compagnie.
@@ -138,7 +151,8 @@ function ns.recevoir(e, moi, groupe, de, texte, io)
     local nom = nomDans(groupe, de)
     if engage(e) == "occupe" then -- la fondation en cours n'est pas remplacée
       io.envoyer("R;" .. id .. ";occupe")
-      return io.dire(nom .. " te propose de fonder une Compagnie : refusé d'office, ta propre proposition est en cours.")
+      return io.dire(nom .. " te propose de fonder une Compagnie : refusé d'office, " .. (e.fondation
+        and "ta propre proposition est en cours." or "tu as déjà accepté celle de " .. e.proposition.nom .. "."))
     end
     e.proposition = { id = id, de = de, nom = nom, guids = guids, deja = c ~= nil }
     if c then io.envoyer("R;" .. id .. ";deja") end
