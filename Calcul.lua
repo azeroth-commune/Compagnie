@@ -2,13 +2,14 @@
 -- Entrée : la liste des membres, chacun avec son état (dernier état connu pour un absent) :
 --   { nom = "Léo", niveau = 10, absent = true,
 --     quetes = { [idQuête] = { finie = false, objectifs = { { texte = "Patte de loup", fait = 5, total = 8 }, … } } } }
--- Sortie : { quetes = { [idQuête] = { objectifs = { … }, aRendre = false, enAttente = { "Léo" } } } }
+-- Sortie : { niveau = 9, quetes = { [idQuête] = { objectifs = { … }, aRendre = false, enAttente = { "Léo" } } } }
 -- Un absent compte comme les autres, avec son dernier état connu : le calcul ne lit donc pas « absent ».
 local _, ns = ...
 
 function ns.calculer(membres)
-  local quetes = {}
+  local quetes, niveau = {}, nil
   for _, m in ipairs(membres) do
+    if not niveau or m.niveau < niveau then niveau = m.niveau end
     for id, q in pairs(m.quetes or {}) do
       local commune = quetes[id]
       if not commune then
@@ -25,5 +26,5 @@ function ns.calculer(membres)
       end
     end
   end
-  return { quetes = quetes }
+  return { niveau = niveau, quetes = quetes }
 end

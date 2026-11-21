@@ -44,4 +44,8 @@ assert(o[2].fait == 1 and o[2].total == 4 and o[2].texte == "Croc de loup", "cro
 assert(c.quetes[CHASSE].aRendre == false, "pas à rendre")
 assert(table.concat(c.quetes[CHASSE].enAttente, ",") == "Léo,Mira", "en attente de Léo et Mira, dans l'ordre des membres")
 
+-- Membres niveaux 9, 10 et 11 : niveau de la Compagnie 9, celui du plus bas.
+c = ns.calculer({ { nom = "Virgile", niveau = 10 }, { nom = "Léo", niveau = 9 }, { nom = "Mira", niveau = 11 } })
+assert(c.niveau == 9, "niveau de la Compagnie : celui du membre le plus bas")
+
 print("Compagnie : calcul de la Compagnie OK")
