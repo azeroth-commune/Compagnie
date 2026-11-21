@@ -284,4 +284,16 @@ ns.expirer(c[L].e, "idV", c[L].io)
 assert(dernier(c[L]):find("La Compagnie proposée par Virgile Marteau n'a pas été fondée", 1, true), dernier(c[L]))
 assert(ns.fonder(c[L].e, L, c[L].groupe, "idL", c[L].io), "après l'expiration, Léo fonde")
 
+-- Le fondateur ne devient membre d'aucune autre Compagnie pendant sa fondation, donc sa clôture dit vrai. Virgile
+-- propose, Léo fonde la sienne avant de répondre : Virgile la refuse d'office (sans quoi il l'accepterait, deviendrait
+-- membre de celle de Léo et dirait « Personne n'a accepté » alors que Léo a accepté la sienne).
+c = groupe({ V, L })
+ns.fonder(c[V].e, V, c[V].groupe, "idV", c[V].io)
+ns.fonder(c[L].e, L, c[L].groupe, "idL", c[L].io)
+ns.repondre(c[V].e, true, c[V].io) -- Virgile accepterait celle de Léo
+assert(c[V].e.db.compagnie == nil, "pendant sa fondation, Virgile n'est membre de rien")
+ns.repondre(c[L].e, true, c[L].io) -- Léo accepte celle de Virgile
+assert(not dit(c[V], "Personne n'a accepté"), "Léo a accepté : " .. dernier(c[V]))
+assert(noms(c[V]) == "Virgile Marteau,Léo Lame" and noms(c[L]) == "Virgile Marteau,Léo Lame", noms(c[V]) .. " / " .. noms(c[L]))
+
 print("Compagnie : membres de la Compagnie OK")

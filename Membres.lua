@@ -68,14 +68,15 @@ function ns.fonder(e, moi, groupe, id, io)
   return true
 end
 
--- Fin de la fondation (tous ont répondu, ou le délai est écoulé) : le fondateur et ceux qui ont accepté.
+-- Fin de la fondation (tous ont répondu, ou le délai est écoulé) : le fondateur et ceux qui ont accepté. Pendant sa
+-- fondation, le fondateur ne devient membre de rien (il n'accepte pas, il refuse d'office) : rien d'autre à vérifier.
 function ns.cloturer(e, moi, groupe, io)
   local f = e.fondation
   if not f then return end
   e.fondation = nil
   local guids = { moi }
   for i = 2, #f.guids do if f.reponses[f.guids[i]] == "A" then guids[#guids + 1] = f.guids[i] end end
-  if #guids < 2 or e.db.compagnie then return io.dire("Personne n'a accepté : pas de Compagnie.") end
+  if #guids < 2 then return io.dire("Personne n'a accepté : pas de Compagnie.") end
   e.db.compagnie = { id = f.id, membres = membres(guids, groupe) }
   io.envoyer("F;" .. f.id .. ";" .. table.concat(guids, ","))
   io.dire("Compagnie fondée : " .. noms(e.db.compagnie) .. ".")
