@@ -48,4 +48,23 @@ assert(table.concat(c.quetes[CHASSE].enAttente, ",") == "Léo,Mira", "en attente
 c = ns.calculer({ { nom = "Virgile", niveau = 10 }, { nom = "Léo", niveau = 9 }, { nom = "Mira", niveau = 11 } })
 assert(c.niveau == 9, "niveau de la Compagnie : celui du membre le plus bas")
 
+-- Léo n'a pas la quête dans son journal (ni rendue) : il compte à 0, donc jamais à rendre sans lui.
+c = ns.calculer({
+  { nom = "Virgile", niveau = 10, quetes = { [PATTES] = pattes(8) } },
+  { nom = "Léo", niveau = 10, quetes = {} },
+})
+q = c.quetes[PATTES]
+assert(q.objectifs[1].fait == 0 and q.objectifs[1].total == 8, "sans la quête : 0/8")
+assert(q.aRendre == false and q.enAttente[1] == "Léo", "en attente de Léo, pas à rendre")
+
+-- Virgile a déjà rendu la quête : il ne retient plus la Compagnie, seul l'avancement de Léo compte.
+local rendue = { nom = "Virgile", niveau = 10, quetes = {}, rendues = { [PATTES] = true } }
+c = ns.calculer({ rendue, { nom = "Léo", niveau = 10, quetes = { [PATTES] = pattes(5) } } })
+assert(c.quetes[PATTES].objectifs[1].fait == 5 and c.quetes[PATTES].enAttente[1] == "Léo", "rendue : 5/8, en attente de Léo")
+c = ns.calculer({ rendue, { nom = "Léo", niveau = 10, quetes = { [PATTES] = pattes(8) } } })
+assert(c.quetes[PATTES].aRendre == true and #c.quetes[PATTES].enAttente == 0, "rendue et Léo a fini : à rendre")
+-- Rendue par tous : plus une quête de la Compagnie.
+c = ns.calculer({ rendue, { nom = "Léo", niveau = 10, quetes = {}, rendues = { [PATTES] = true } } })
+assert(c.quetes[PATTES] == nil, "rendue par tous : plus dans les quêtes de la Compagnie")
+
 print("Compagnie : calcul de la Compagnie OK")
