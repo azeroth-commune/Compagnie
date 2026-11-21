@@ -43,6 +43,7 @@ StaticPopupDialogs.COMPAGNIE_PROPOSITION = {
   OnAccept = function() ns.repondre(e, true, jeu) end,
   OnCancel = function() ns.repondre(e, false, jeu) end, -- aussi au bout du délai
   timeout = DELAI, whileDead = true, hideOnEscape = true,
+  noCancelOnReuse = true, -- une 2e proposition remplace la 1re : pas de refus envoyé pour la nouvelle
 }
 StaticPopupDialogs.COMPAGNIE_DEJA = {
   text = "%s te propose de fonder une Compagnie, mais tu es déjà membre d'une Compagnie : quitte-la pour en rejoindre une autre. Ta réponse est partie : non.",

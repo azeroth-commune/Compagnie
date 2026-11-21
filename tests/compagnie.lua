@@ -202,3 +202,26 @@ test("une proposition reçue : refuser, accepter puis fondée ; déjà membre, e
     end)
     CompagnieDB.compagnie = nil
 end)
+
+test("une 2e proposition pendant que la 1re est affichée la remplace, et reste à répondre", function()
+    CompagnieDB.compagnie = nil
+    avecLeo(function(envoyes)
+        recu("P;p3;" .. LEO .. "," .. moi().guid)
+        recu("P;p4;" .. LEO .. "," .. moi().guid)
+        assertEquals(0, #envoyes, "aucun refus envoyé tout seul")
+        local _, popup = StaticPopup_Visible("COMPAGNIE_PROPOSITION")
+        popup.button1:Click()
+        assertEquals("A;p4", envoyes[#envoyes].texte)
+    end)
+end)
+
+test("la Compagnie est retrouvée telle quelle après un /reload (CompagnieDB relue au chargement)", function()
+    CompagnieDB = { compagnie = { id = "r1", membres = { moi(), { guid = LEO, nom = "Léo Lame" } } } }
+    CompagnieMessages:GetScript("OnEvent")(CompagnieMessages, "ADDON_LOADED", "Compagnie")
+    SlashCmdList.COMPAGNIE("")
+    local l = lignes()
+    assertEquals(2, #l)
+    assertEquals("Léo Lame", l[2].nom)
+    CompagnieFrame:Hide()
+    CompagnieDB.compagnie = nil
+end)
