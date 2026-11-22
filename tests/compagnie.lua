@@ -33,11 +33,11 @@ local function dits(f)
     return table.concat(t, "\n")
 end
 
--- Mon groupe du jeu le temps de f(envoyes) : autres = { { guid, prénom, nom }, … } (connectés), {} : hors d'un groupe
+-- Mon groupe du jeu le temps de f(envoyes) : autres = { { guid, prénom, nom [, horsLigne = true] [, loin = true] }, … }, {} : hors d'un groupe
 -- (le simulateur met le joueur dans un groupe de 5) ; raid : un raid. envoyes : les messages d'add-on partis.
 local function avecGroupe(autres, raid, f)
     local g = { GetNumGroupMembers = GetNumGroupMembers, IsInRaid = IsInRaid, IsInGroup = IsInGroup, UnitGUID = UnitGUID,
-        UnitName = UnitName, UnitIsConnected = UnitIsConnected, envoi = C_ChatInfo.SendAddonMessage }
+        UnitName = UnitName, UnitIsConnected = UnitIsConnected, UnitIsVisible = UnitIsVisible, envoi = C_ChatInfo.SendAddonMessage }
     local envoyes = {}
     local function autre(u)
         local i = tonumber(u:match("^party(%d)$") or u:match("^raid(%d+)$"))
@@ -48,13 +48,14 @@ local function avecGroupe(autres, raid, f)
     IsInGroup = function() return #autres > 0 end
     UnitGUID = function(u) local a = autre(u) if a then return a[1] end return g.UnitGUID(u) end
     UnitName = function(u) local a = autre(u) if a then return a[2], a[3] end return g.UnitName(u) end
-    UnitIsConnected = function(u) local a = autre(u) if a then return a[1] ~= nil end return g.UnitIsConnected(u) end
+    UnitIsConnected = function(u) local a = autre(u) if a then return a[1] ~= nil and not a.horsLigne end return g.UnitIsConnected(u) end
+    UnitIsVisible = function(u) local a = autre(u) if a then return a[1] ~= nil and not a.horsLigne and not a.loin end return g.UnitIsVisible(u) end
     C_ChatInfo.SendAddonMessage = function(prefixe, texte, canal, cible)
         envoyes[#envoyes + 1] = { prefixe = prefixe, texte = texte, canal = canal, cible = cible }
     end
     local ok, err = pcall(f, envoyes)
-    GetNumGroupMembers, IsInRaid, IsInGroup, UnitGUID, UnitName, UnitIsConnected =
-        g.GetNumGroupMembers, g.IsInRaid, g.IsInGroup, g.UnitGUID, g.UnitName, g.UnitIsConnected
+    GetNumGroupMembers, IsInRaid, IsInGroup, UnitGUID, UnitName, UnitIsConnected, UnitIsVisible =
+        g.GetNumGroupMembers, g.IsInRaid, g.IsInGroup, g.UnitGUID, g.UnitName, g.UnitIsConnected, g.UnitIsVisible
     C_ChatInfo.SendAddonMessage = g.envoi
     if not ok then error(err, 0) end
 end
@@ -258,7 +259,7 @@ local function avecJournal(quetes, f)
     q.GetQuestObjectives = function(id)
         local t = {}
         for k, o in ipairs(parId[id] and parId[id].objectifs or {}) do
-            t[k] = { text = o[1], numFulfilled = o[2], numRequired = o[3], finished = o[2] >= o[3] }
+            t[k] = { text = o[1], numFulfilled = o[2], numRequired = o[3], finished = tonumber(o[2]) == o[3] }
         end
         return t
     end
@@ -275,6 +276,12 @@ local function pattes(fait)
 end
 local RAPTORS = { id = 95789, titre = "Les raptors", objectifs = { { "Raptor flagellant : 2/10 |4personnage tué:personnages tués;", 2, 10 } } }
 
+-- Le temps s'écoule de s secondes (horloge manuelle du simulateur) : les minuteries programmées partent.
+local function ecouler(s)
+    pcall(A_Admin.SetManualClock, GetTime()) -- déjà manuelle : sans effet
+    A_Admin.AdvanceTime(s)
+end
+local function evenement(ev, ...) CompagnieMessages:GetScript("OnEvent")(CompagnieMessages, ev, ...) end
 local function charger() CompagnieMessages:GetScript("OnEvent")(CompagnieMessages, "ADDON_LOADED", "Compagnie") end
 local function chuchote(texte, de)
     CompagnieMessages:GetScript("OnEvent")(CompagnieMessages, "CHAT_MSG_ADDON", "Compagnie", texte, "WHISPER", de or "Léo Lame")
@@ -372,16 +379,11 @@ test("le dernier état connu d'un absent est retrouvé après un /reload et comp
             charger()
             assertEquals(5, CompagnieDB.etats[LEO].quetes[1001].objectifs[1].fait)
             assertTrue(contient(suivi(), "Patte de loup : 5/8"), suivi())
+            assertTrue(contient(suivi(), "En attente de Léo"), "après le rechargement, Léo est absent : " .. suivi())
         end)
     end)
     eteindre()
 end)
-
--- Le temps s'écoule de s secondes (horloge manuelle du simulateur) : les envois regroupés programmés partent.
-local function ecouler(s)
-    pcall(A_Admin.SetManualClock, GetTime()) -- déjà manuelle : sans effet
-    A_Admin.AdvanceTime(s)
-end
 
 test("une demande d'état reçoit le mien : au groupe du jeu, ou chuchoté hors du groupe ; pas à un non-membre", function()
     avecJournal({ pattes(3) }, function()
@@ -409,6 +411,140 @@ test("une demande d'état reçoit le mien : au groupe du jeu, ou chuchoté hors 
             assertNotNil(m, "un état part")
             assertEquals("PARTY", m.canal)
             assertTrue(m.texte:find("^E;essai;") ~= nil, m.texte)
+        end)
+    end)
+    eteindre()
+end)
+
+test("un membre hors du groupe entendu puis muet : redemandé, absent au bout de 2 min sans réponse", function()
+    avecJournal({ pattes(8) }, function()
+        avecGroupe({}, false, function(envoyes)
+            fabriquer({ guid = LEO, nom = "Léo Lame" })
+            CompagnieDB.etats = nil
+            charger()
+            ecouler(5)
+            chuchote("E;essai;1/1/1;10#1001:0:5/8#")
+            assertTrue(not contient(suivi(), "En attente"), "Léo vient d'écrire : présent")
+            local n = #envoyes
+            ecouler(125)
+            ecouler(30)
+            local demandes = 0
+            for i = n + 1, #envoyes do
+                if envoyes[i].texte == "D;essai" and envoyes[i].cible == "Léo Lame" then demandes = demandes + 1 end
+            end
+            assertTrue(demandes >= 1 and demandes <= 3, "demandé une fois par minute de silence : " .. demandes)
+            assertTrue(contient(suivi(), "En attente de Léo"), "sans réponse depuis 2 min : absent, " .. suivi())
+            chuchote("E;essai;2/1/1;10#1001:0:5/8#") -- il répond
+            assertTrue(not contient(suivi(), "En attente"), "de nouveau présent")
+        end)
+    end)
+    eteindre()
+end)
+
+test("un membre du groupe déconnecté n'est pas présent, même entendu il y a peu", function()
+    avecJournal({ pattes(8) }, function()
+        fabriquer({ guid = LEO, nom = "Léo Lame" })
+        charger()
+        avecGroupe({}, false, function() chuchote("E;essai;1/1/1;10#1001:0:5/8#") end)
+        avecGroupe({ { LEO, "Léo", "Lame", horsLigne = true } }, false, function()
+            evenement("GROUP_ROSTER_UPDATE")
+            assertTrue(contient(suivi(), "En attente de Léo"), suivi())
+        end)
+    end)
+    eteindre()
+end)
+
+test("en combat, le suivi du jeu passe seulement en transparent ; l'état voulu suit la fin du combat", function()
+    eteindre()
+    ObjectiveTrackerFrame:Show()
+    local garde, combat = InCombatLockdown, true
+    InCombatLockdown = function() return combat end
+    local ok, err = pcall(function()
+        avecGroupe({}, false, function()
+            avecJournal({ pattes(3) }, function()
+                fabriquer({ guid = LEO, nom = "Léo Lame" })
+                charger() -- mode Compagnie allumé en combat
+                assertTrue(ObjectiveTrackerFrame:IsShown(), "pas de Hide en combat")
+                assertEquals(0, ObjectiveTrackerFrame:GetAlpha())
+                ObjectiveTrackerFrame:Show() -- le jeu le remontre en combat
+                assertTrue(ObjectiveTrackerFrame:IsShown() and ObjectiveTrackerFrame:GetAlpha() == 0, "toujours transparent")
+                combat = false
+                evenement("PLAYER_REGEN_ENABLED")
+                assertTrue(not ObjectiveTrackerFrame:IsShown(), "hors combat : masqué")
+                assertEquals(1, ObjectiveTrackerFrame:GetAlpha())
+                combat = true
+                dits(function() SlashCmdList.COMPAGNIE("suivi") end) -- éteint en combat
+                assertTrue(not ObjectiveTrackerFrame:IsShown(), "pas de Show en combat")
+                combat = false
+                evenement("PLAYER_REGEN_ENABLED")
+                assertTrue(ObjectiveTrackerFrame:IsShown() and ObjectiveTrackerFrame:GetAlpha() == 1, "hors combat : rétabli")
+            end)
+        end)
+    end)
+    InCombatLockdown = garde
+    eteindre()
+    if not ok then error(err, 0) end
+end)
+
+test("les envois d'une rafale d'événements sont regroupés en un seul message", function()
+    avecLeo(function(envoyes)
+        avecJournal({ pattes(1) }, function()
+            fabriquer({ guid = LEO, nom = "Léo Lame" })
+            charger()
+            ecouler(5)
+        end)
+        avecJournal({ pattes(2) }, function()
+            local n = #envoyes
+            for _ = 1, 20 do evenement("QUEST_LOG_UPDATE") end
+            assertEquals(n, #envoyes, "rien ne part pendant la rafale")
+            ecouler(5)
+            assertEquals(n + 1, #envoyes, "un seul message")
+            assertEquals("PARTY", envoyes[#envoyes].canal)
+            assertTrue(envoyes[#envoyes].texte:find("#1001:0:2/8#", 1, true) ~= nil, envoyes[#envoyes].texte)
+        end)
+    end)
+    eteindre()
+end)
+
+test("quitter la Compagnie oublie les derniers états connus", function()
+    fabriquer({ guid = LEO, nom = "Léo Lame" })
+    CompagnieDB.etats = { [LEO] = { niveau = 10, quetes = {}, rendues = {} } }
+    avecGroupe({}, false, function() dits(function() SlashCmdList.COMPAGNIE("quitter") end) end)
+    assertNil(CompagnieDB.etats)
+    eteindre()
+end)
+
+test("un texte d'objectif qui n'a pas mon compte exact ne montre aucun compte que le commun", function()
+    avecGroupe({}, false, function()
+        avecJournal({ { id = 1001, titre = "Les pattes de loup", objectifs = { { "Patte de loup : 7/8", 8, 8 } } },
+            { id = 1002, titre = "Les crocs", objectifs = { { "Croc de loup : 3/4", "3", 4 } } } }, function()
+            fabriquer({ guid = LEO, nom = "Léo Lame" })
+            CompagnieDB.etats = { [LEO] = { niveau = 10, rendues = {}, quetes = {
+                [1001] = { finie = false, objectifs = { { fait = 5, total = 8 } } },
+                [1002] = { finie = false, objectifs = { { fait = 1, total = 4 } } } } } }
+            charger()
+            local t = suivi()
+            assertTrue(contient(t, "Patte de loup : 5/8") and not contient(t, "7/8") and not contient(t, "8/8"), t)
+            assertTrue(contient(t, "Croc de loup : 1/4") and not contient(t, "3/4"), t)
+        end)
+    end)
+    eteindre()
+end)
+
+test("IsUnitOnQuest corrige un membre du groupe en vue ; trop loin, son « non » ne compte pas", function()
+    avecJournal({ pattes(8) }, function()
+        C_QuestLog.IsUnitOnQuest = function() return false end -- rendu par avecJournal
+        fabriquer({ guid = LEO, nom = "Léo Lame" })
+        CompagnieDB.etats = { [LEO] = { niveau = 10, rendues = {}, quetes = {
+            [1001] = { finie = false, objectifs = { { fait = 5, total = 8 } } } } } }
+        charger()
+        avecGroupe({ { LEO, "Léo", "Lame", loin = true } }, false, function()
+            evenement("GROUP_ROSTER_UPDATE")
+            assertTrue(contient(suivi(), "Patte de loup : 5/8"), "trop loin : son état tient, " .. suivi())
+        end)
+        avecGroupe({ { LEO, "Léo", "Lame" } }, false, function()
+            evenement("GROUP_ROSTER_UPDATE")
+            assertTrue(contient(suivi(), "Patte de loup : 0/8"), "en vue, il n'a plus la quête : 0/8, " .. suivi())
         end)
     end)
     eteindre()

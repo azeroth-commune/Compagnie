@@ -55,7 +55,7 @@ function ns.decoder(corps)
   if #liste > MAX_QUETES then return end
   for _, q in ipairs(liste) do
     local c = couper(q, ":")
-    local id = entier(c[1], 9999999999)
+    local id = entier(c[1], 2147483647) -- questID : entier 32 bits signé
     if not id or id < 1 or etat.quetes[id] or (c[2] ~= "0" and c[2] ~= "1") or #c - 2 > MAX_OBJECTIFS then return end
     local objectifs = {}
     for k = 3, #c do
@@ -69,7 +69,7 @@ function ns.decoder(corps)
   liste = f[3] == "" and {} or couper(f[3], ",")
   if #liste > MAX_RENDUES then return end
   for _, r in ipairs(liste) do
-    local id = entier(r, 9999999999)
+    local id = entier(r, 2147483647)
     if not id or id < 1 then return end
     etat.rendues[id] = true
   end
@@ -146,7 +146,7 @@ end
 
 -- Un changement de mon état (force : une demande d'état, il part même inchangé). Une rafale d'événements ne programme
 -- qu'un envoi, ns.DELAI_ENVOI plus tard, avec l'état lu à ce moment ; un état inchangé ne repart pas.
--- io = { programmer = fn(délai, fn), monEtat = fn() -> état, envoyerEtat = fn(message) }.
+-- io = { programmer = fn(délai, fn), monEtat = fn() -> état, envoyerEtat = fn(message) -> false si refusé }.
 function ns.signaler(e, force, io)
   e.force = e.force or force
   if e.prevu then return end
@@ -157,7 +157,10 @@ function ns.signaler(e, force, io)
     if not c then return end
     local corps = ns.encoder(io.monEtat())
     if corps == e.dernier and not e.force then return end
-    e.force, e.dernier, e.envoi = false, corps, (e.envoi or 0) % 99 + 1
-    for _, m in ipairs(ns.morceaux(c.id, corps, e.envoi)) do io.envoyerEtat(m) end
+    e.force, e.envoi = false, (e.envoi or 0) % 99 + 1
+    local morceaux, tous = ns.morceaux(c.id, corps, e.envoi), true
+    for _, m in ipairs(morceaux) do tous = io.envoyerEtat(m) ~= false and tous end
+    -- Noté comme parti seulement s'il est entré en entier dans la file d'envoi : sinon il repartira.
+    e.dernier = tous and #morceaux > 0 and corps or nil
   end)
 end

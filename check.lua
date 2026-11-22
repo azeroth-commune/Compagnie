@@ -337,6 +337,10 @@ for _, mauvais in ipairs({ "", "x", "35", "35#", "0##", "35#a:0##", "35#1:2##", 
   assert(ns.decoder(mauvais) == nil, "rejeté : " .. mauvais:sub(1, 40))
 end
 
+-- Les questID sont bornés à 2147483647 (un entier 32 bits signé, comme le jeu).
+assert(ns.decoder("35#2147483647:0#2147483647").quetes[2147483647], "2147483647 : accepté")
+assert(ns.decoder("35#2147483648:0#") == nil and ns.decoder("35##2147483648") == nil, "au-delà : rejeté")
+
 -- Un état part en morceaux de messages d'add-on bornés (255 octets) et se recompose chez un membre.
 local V2, L2, Z2 = "Player-1-0000000V", "Player-1-0000000L", "Player-1-0000000Z"
 local gros = { niveau = 40, quetes = {}, rendues = {} }
@@ -447,10 +451,21 @@ ns.signaler(e2, false, ioEnvoi)
 assert(#programmes == 1, "toujours un seul envoi programmé")
 table.remove(programmes, 1).fn()
 assert(#partis == 2, "en réponse à une demande : il repart")
+-- Un message refusé par la file d'envoi (pleine) : l'état n'est pas noté comme parti, il repart au prochain envoi.
+local refuse = true
+ioEnvoi.envoyerEtat = function(texte) if refuse then return false end partis[#partis + 1] = texte end
+monEtat = { niveau = 11, quetes = {}, rendues = {} }
+ns.signaler(e2, false, ioEnvoi)
+table.remove(programmes, 1).fn()
+assert(#partis == 2, "refusé : rien n'est parti")
+refuse = false
+ns.signaler(e2, false, ioEnvoi)
+table.remove(programmes, 1).fn()
+assert(#partis == 3, "le même état repart : " .. #partis)
 -- Sans Compagnie, rien ne part.
 local e3 = { db = {} }
 ns.signaler(e3, true, ioEnvoi)
 table.remove(programmes, 1).fn()
-assert(#partis == 2, "sans Compagnie : rien")
+assert(#partis == 3, "sans Compagnie : rien")
 
 print("Compagnie : états de la Compagnie OK")
