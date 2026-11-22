@@ -280,7 +280,9 @@ local function dessinerSuivi()
   local f = CompagnieSuiviFrame
   if not (f and f:IsShown() and e.db.compagnie) then return end
   CompagnieSuiviQuetes:SetText(texteSuivi())
-  f:SetHeight(110 + CompagnieSuiviQuetes:GetStringHeight())
+  local h = CompagnieSuiviQuetes:GetStringHeight()
+  CompagnieSuiviQuetes:GetParent():SetHeight(math.max(1, h))
+  f:SetHeight(math.min(110 + h, UIParent:GetHeight() * 0.6))
 end
 
 local function titreDePartie(f, texte, y)
@@ -300,9 +302,16 @@ local function ouvrirSuivi()
     f:SetFrameStrata("LOW")
     titreDePartie(f, "À faire", -40)
     titreDePartie(f, "Quêtes", -72)
-    local q = f:CreateFontString("CompagnieSuiviQuetes", "OVERLAY", "GameFontHighlightSmall")
-    q:SetPoint("TOPLEFT", 14, -92)
-    q:SetWidth(262)
+    -- Beaucoup de quêtes : la fenêtre s'arrête à 60 % de l'écran et les quêtes défilent (molette).
+    local defil = CreateFrame("ScrollFrame", "CompagnieSuiviDefil", f, "UIPanelScrollFrameTemplate")
+    defil:SetPoint("TOPLEFT", 14, -92)
+    defil:SetPoint("BOTTOMRIGHT", -32, 12)
+    local contenu = CreateFrame("Frame", nil, defil)
+    contenu:SetSize(244, 1)
+    defil:SetScrollChild(contenu)
+    local q = contenu:CreateFontString("CompagnieSuiviQuetes", "OVERLAY", "GameFontHighlightSmall")
+    q:SetPoint("TOPLEFT")
+    q:SetWidth(244)
     q:SetJustifyH("LEFT")
     -- Fermée par sa croix (pas quand l'interface entière est cachée, Alt-Z : elle reste « montrée ») : mode éteint.
     f:HookScript("OnHide", function(self)
@@ -507,7 +516,8 @@ cadre:SetScript("OnEvent", function(_, ev, a1, texte, canal, expediteur)
       CompagnieDB = CompagnieDB or {}
       e.db, e.moi = CompagnieDB, moi()
       connectes, chuchotes = {}, {} -- la présence repart de zéro (en jeu, un /reload efface tout l'état Lua)
-      appliquerMode()
+      -- Pas de fenêtre ici : à ADDON_LOADED, les add-ons chargés après nous (Diagnostic, qui donne sa loupe aux
+      -- fenêtres du socle) ne le sont pas encore. PLAYER_ENTERING_WORLD applique le mode.
       if not veille then veille = true; C_Timer.After(VEILLE, veiller) end
     end
   elseif ev == "PLAYER_ENTERING_WORLD" then

@@ -236,6 +236,7 @@ end)
 test("la Compagnie est retrouvée telle quelle après un /reload (CompagnieDB relue au chargement)", function()
     CompagnieDB = { compagnie = { id = "r1", membres = { moi(), { guid = LEO, nom = "Léo Lame" } } } }
     CompagnieMessages:GetScript("OnEvent")(CompagnieMessages, "ADDON_LOADED", "Compagnie")
+    CompagnieMessages:GetScript("OnEvent")(CompagnieMessages, "PLAYER_ENTERING_WORLD")
     SlashCmdList.COMPAGNIE("")
     local l = lignes()
     assertEquals(2, #l)
@@ -282,7 +283,10 @@ local function ecouler(s)
     A_Admin.AdvanceTime(s)
 end
 local function evenement(ev, ...) CompagnieMessages:GetScript("OnEvent")(CompagnieMessages, ev, ...) end
-local function charger() CompagnieMessages:GetScript("OnEvent")(CompagnieMessages, "ADDON_LOADED", "Compagnie") end
+local function charger()
+    CompagnieMessages:GetScript("OnEvent")(CompagnieMessages, "ADDON_LOADED", "Compagnie")
+    CompagnieMessages:GetScript("OnEvent")(CompagnieMessages, "PLAYER_ENTERING_WORLD") -- comme le jeu, juste après
+end
 local function chuchote(texte, de)
     CompagnieMessages:GetScript("OnEvent")(CompagnieMessages, "CHAT_MSG_ADDON", "Compagnie", texte, "WHISPER", de or "Léo Lame")
 end
@@ -578,4 +582,22 @@ test("la suggestion Questie n'apparaît qu'une fois et ne modifie aucune option 
     if not ok then error(err, 0) end
     assertEquals(0, #ecrits, "aucune option de Questie écrite")
     assertNil(next(profil), "profil de Questie intact")
+end)
+
+test("beaucoup de quêtes : le suivi s'arrête à 60 % de l'écran et les quêtes défilent", function()
+    avecGroupe({}, false, function()
+        local beaucoup = {}
+        for i = 1, 30 do beaucoup[i] = { id = 2000 + i, titre = "Quête " .. i, objectifs = { { "Truc : 0/5", 0, 5 } } } end
+        avecJournal(beaucoup, function()
+            fabriquer({ guid = LEO, nom = "Léo Lame" })
+            CompagnieDB.modeCompagnie = nil
+            charger()
+            assertTrue(CompagnieSuiviFrame:IsShown(), "le suivi est ouvert")
+            assertTrue(CompagnieSuiviQuetes:GetStringHeight() > UIParent:GetHeight() * 0.6, "assez de quêtes pour dépasser")
+            assertTrue(CompagnieSuiviFrame:GetHeight() <= UIParent:GetHeight() * 0.6 + 0.5,
+                "hauteur bornée : " .. CompagnieSuiviFrame:GetHeight() .. " / écran " .. UIParent:GetHeight())
+            assertTrue(CompagnieSuiviDefil:GetVerticalScrollRange() > 0, "les quêtes défilent")
+        end)
+    end)
+    eteindre()
 end)
