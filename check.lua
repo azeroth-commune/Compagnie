@@ -330,16 +330,17 @@ local avecTexte = { niveau = 12, quetes = { [7] = { finie = false, objectifs = {
 assert(not ns.encoder(avecTexte):find("Raptor", 1, true), "le texte n'est pas envoyé")
 assert(ns.decoder(ns.encoder(avecTexte)).quetes[7].objectifs[1].fait == 2, "les nombres le sont")
 
--- Lecture stricte : un champ mal formé, et tout l'état est rejeté (jamais exécuté ni interprété).
-for _, mauvais in ipairs({ "", "x", "35", "35#", "0##", "35#a:0##", "35#1:2##", "35#1:0:9/8##", "35#1:0:1/2:##",
-  "35#1:0##x", "35##1,,2", "999##", "35#1:0;1:1##", "35#-1:0##", "35#1:0:1/2/3##", "35#1:0##" .. ("1,"):rep(300) .. "1",
-  "35#1:0:" .. ("1/2:"):rep(30) .. "1/2##", "os.exit()", "35#1:0##;os.exit()" }) do
+-- Lecture stricte : un champ mal formé, et tout l'état est rejeté (jamais exécuté ni interprété). Un seul format (bêta) :
+-- un état à trois champs (celui de #12, sans zones) est rejeté aussi.
+for _, mauvais in ipairs({ "", "x", "35", "35#", "35##", "35#1:0#", "0###", "35#a:0###", "35#1:2###", "35#1:0:9/8###",
+  "35#1:0:1/2:###", "35#1:0####", "35##1,,2#", "999###", "35#1:0;1:1###", "35#-1:0###", "35#1:0:1/2/3###",
+  "35#1:0##" .. ("1,"):rep(300) .. "1#", "35#1:0:" .. ("1/2:"):rep(30) .. "1/2###", "os.exit()", "35#1:0##;os.exit()#" }) do
   assert(ns.decoder(mauvais) == nil, "rejeté : " .. mauvais:sub(1, 40))
 end
 
 -- Les questID sont bornés à 2147483647 (un entier 32 bits signé, comme le jeu).
-assert(ns.decoder("35#2147483647:0#2147483647").quetes[2147483647], "2147483647 : accepté")
-assert(ns.decoder("35#2147483648:0#") == nil and ns.decoder("35##2147483648") == nil, "au-delà : rejeté")
+assert(ns.decoder("35#2147483647:0#2147483647#").quetes[2147483647], "2147483647 : accepté")
+assert(ns.decoder("35#2147483648:0##") == nil and ns.decoder("35##2147483648#") == nil, "au-delà : rejeté")
 
 -- La zone de chaque quête (#13 : l'en-tête de zone de mon journal) part avec l'état : encodage puis décodage → identique.
 local avecZones = { niveau = 35, rendues = { [1453] = true }, quetes = {
@@ -351,10 +352,9 @@ local avecZones = { niveau = 35, rendues = { [1453] = true }, quetes = {
 corps = ns.encoder(avecZones)
 assert(pareil(ns.decoder(corps), avecZones), "avec zones : identique (" .. corps .. ")")
 assert(ns.encoder(ns.decoder(corps)) == corps, "avec zones : toujours encodé pareil")
--- Sans zone, l'état garde le format de #12 (trois champs), que les clients déjà distribués lisent ; et ce format reste lu.
-assert(select(2, ns.encoder(etat):gsub("#", "")) == 2, "sans zone : trois champs (" .. ns.encoder(etat) .. ")")
-local ancien = assert(ns.decoder("35#1001:0:5/8;659:0#1453"), "un état de #12 est toujours lu")
-assert(ancien.quetes[1001].zone == nil and ancien.quetes[1001].objectifs[1].fait == 5, "…sans zone")
+-- Un état sans zone est accepté (champ des zones vide).
+local sansZone = assert(ns.decoder("35#1001:0:5/8;659:0#1453#"), "sans zone : accepté")
+assert(sansZone.quetes[1001].zone == nil and sansZone.quetes[1001].objectifs[1].fait == 5, "…ses quêtes sans zone")
 -- Une zone mal formée fait rejeter tout l'état : vide, trop longue, caractère de contrôle, « | » (codes du chat), un
 -- séparateur du format ; une zone sans quête, une quête absente de l'état ou rangée deux fois, une zone répétée.
 for _, z in ipairs({ "", ("x"):rep(49), "a|cffff0000b", "a\nb", "a\1b", "a\0b", "a\127b", "a#b", "a;b", "a:b", "a,b",
