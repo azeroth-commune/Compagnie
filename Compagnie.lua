@@ -117,13 +117,16 @@ end
 
 local function entier(v, max) return math.min(max, math.max(0, math.floor(tonumber(v) or 0))) end
 
+-- La zone d'une quête (#13) : l'en-tête sous lequel le journal la range (en Classic, un nom de zone ; à vérifier en jeu
+-- contre GetRealZoneText).
 local function monEtat()
-  local quetes, rendues = {}, {}
+  local quetes, rendues, zone = {}, {}, nil
   for i = 1, 200 do
     local info = C_QuestLog.GetInfo(i)
     if not info then break end
     local id = info.questID
-    if not info.isHeader and type(id) == "number" and id > 0 then
+    if info.isHeader then zone = type(info.title) == "string" and info.title or nil
+    elseif type(id) == "number" and id > 0 then
       local objectifs, toutFini = {}, true
       for k, o in ipairs(C_QuestLog.GetQuestObjectives(id) or {}) do
         local total = entier(o.numRequired, 99999)
@@ -133,7 +136,7 @@ local function monEtat()
       end
       local finie = C_QuestLog.IsComplete(id)
       if type(finie) ~= "boolean" then finie = toutFini end
-      quetes[id] = { finie = finie, objectifs = objectifs }
+      quetes[id] = { finie = finie, objectifs = objectifs, zone = zone }
       titres[id] = info.title
     end
   end
@@ -241,6 +244,37 @@ local function ligneObjectif(i, o)
   return (o.fait >= o.total and "|cff59cc73" or "|cffdddddd") .. "  - " .. t .. "|r"
 end
 
+-- Le filtre par zone (#13) : CompagnieDB.zoneSuivi = nil (la zone en cours, GetRealZoneText, suivie sur
+-- ZONE_CHANGED_NEW_AREA), true (toutes les zones) ou le nom d'une zone ; gardé par personnage. Il ne change que
+-- l'affichage : le calcul, les envois et les derniers états connus n'en savent rien. Une quête sans zone connue n'est
+-- que dans « Toutes les zones ».
+local zonesCompagnie = {} -- les zones où la Compagnie a des quêtes, triées, au dernier dessin : le choix du bouton
+local function zoneEnCours() local z = GetRealZoneText() return z ~= "" and z or nil end
+local function zoneAffichee() -- nil : toutes (zone en cours inconnue, pendant un chargement : toutes aussi)
+  local z = e.db.zoneSuivi
+  if z == nil then return zoneEnCours() end
+  return z ~= true and z or nil
+end
+local function libelleZone()
+  local z = e.db.zoneSuivi
+  if z == nil then return "Zone en cours (" .. (zoneEnCours() or "?") .. ")" end
+  return z == true and "Toutes les zones" or z
+end
+-- Le choix suivant (pas = 1) ou précédent (-1) : zone en cours → zones de la Compagnie (sauf celle où l'on est) →
+-- toutes les zones → zone en cours…
+local function zoneSuivante(pas)
+  local choix, ici = { false }, zoneEnCours()
+  for _, z in ipairs(zonesCompagnie) do if z ~= ici then choix[#choix + 1] = z end end
+  choix[#choix + 1] = true
+  local actuel, i = e.db.zoneSuivi, 0
+  if actuel == nil then actuel = false end
+  for k, v in ipairs(choix) do if v == actuel then i = k end end
+  if i == 0 and pas < 0 then i = 1 end -- la zone choisie n'a plus de quête : on repart du début
+  local v = choix[(i - 1 + pas) % #choix + 1]
+  if v == false then return nil end
+  return v
+end
+
 -- Le texte des quêtes de la Compagnie, calculé depuis mon journal et les derniers états connus.
 local function texteSuivi()
   local presents, unites = presence()
@@ -260,7 +294,14 @@ local function texteSuivi()
   end
   local calc, ordre, lignes = ns.calculer(liste), {}, {}
   local function titre(id) return titres[id] or C_QuestLog.GetTitleForQuestID(id) or ("Quête " .. id) end
-  for id in pairs(calc.quetes) do ordre[#ordre + 1] = id end
+  local voir, zones = zoneAffichee(), {}
+  for id, q in pairs(calc.quetes) do
+    if q.zone then zones[q.zone] = true end
+    if not voir or q.zone == voir then ordre[#ordre + 1] = id end
+  end
+  zonesCompagnie = {}
+  for z in pairs(zones) do zonesCompagnie[#zonesCompagnie + 1] = z end
+  table.sort(zonesCompagnie)
   table.sort(ordre, function(a, b) return titre(a) < titre(b) end)
   for _, id in ipairs(ordre) do
     local q = calc.quetes[id]
@@ -273,13 +314,15 @@ local function texteSuivi()
     if q.aRendre then lignes[#lignes + 1] = "  |cff59cc73À rendre|r"
     elseif #attente > 0 then lignes[#lignes + 1] = "  |cff999999En attente de " .. table.concat(attente, ", ") .. "|r" end
   end
-  return #lignes > 0 and table.concat(lignes, "\n") or "|cff999999Aucune quête en cours.|r"
+  if #lignes > 0 then return table.concat(lignes, "\n") end
+  return voir and "|cff999999Aucune quête de la Compagnie dans cette zone.|r" or "|cff999999Aucune quête en cours.|r"
 end
 
 local function dessinerSuivi()
   local f = CompagnieSuiviFrame
   if not (f and f:IsShown() and e.db.compagnie) then return end
   CompagnieSuiviQuetes:SetText(texteSuivi())
+  CompagnieSuiviZone:SetText(libelleZone())
   local h = CompagnieSuiviQuetes:GetStringHeight()
   CompagnieSuiviQuetes:GetParent():SetHeight(math.max(1, h))
   f:SetHeight(math.min(110 + h, UIParent:GetHeight() * 0.6))
@@ -302,6 +345,25 @@ local function ouvrirSuivi()
     f:SetFrameStrata("LOW")
     titreDePartie(f, "À faire", -40)
     titreDePartie(f, "Quêtes", -72)
+    -- Le filtre par zone : un bouton qui fait défiler les choix (clic droit : en arrière), son choix écrit dessus.
+    local z = CreateFrame("Button", "CompagnieSuiviZone", f, "UIPanelButtonTemplate")
+    z:SetPoint("TOPLEFT", 74, -68)
+    z:SetPoint("TOPRIGHT", -14, -68)
+    z:SetHeight(20)
+    z:SetNormalFontObject("GameFontNormalSmall")
+    z:SetHighlightFontObject("GameFontHighlightSmall")
+    z:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    z:SetScript("OnClick", function(_, b)
+      e.db.zoneSuivi = zoneSuivante(b == "RightButton" and -1 or 1)
+      dessinerSuivi()
+    end)
+    z:SetScript("OnEnter", function(self)
+      GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
+      GameTooltip:SetText("Quêtes affichées")
+      GameTooltip:AddLine("Clic : zone suivante ; clic droit : précédente.", 1, 1, 1)
+      GameTooltip:Show()
+    end)
+    z:SetScript("OnLeave", function() GameTooltip:Hide() end)
     -- Beaucoup de quêtes : la fenêtre s'arrête à 60 % de l'écran et les quêtes défilent (molette).
     local defil = CreateFrame("ScrollFrame", "CompagnieSuiviDefil", f, "UIPanelScrollFrameTemplate")
     defil:SetPoint("TOPLEFT", 14, -92)
@@ -509,7 +571,7 @@ end
 local MONJOURNAL = { QUEST_LOG_UPDATE = true, QUEST_TURNED_IN = true, PLAYER_LEVEL_UP = true, UNIT_QUEST_LOG_CHANGED = true }
 local cadre = CreateFrame("Frame", "CompagnieMessages")
 for _, ev in ipairs({ "ADDON_LOADED", "PLAYER_ENTERING_WORLD", "CHAT_MSG_ADDON", "GROUP_ROSTER_UPDATE", "QUEST_LOG_UPDATE",
-  "QUEST_TURNED_IN", "PLAYER_LEVEL_UP", "UNIT_QUEST_LOG_CHANGED", "PLAYER_REGEN_ENABLED" }) do cadre:RegisterEvent(ev) end
+  "QUEST_TURNED_IN", "PLAYER_LEVEL_UP", "UNIT_QUEST_LOG_CHANGED", "PLAYER_REGEN_ENABLED", "ZONE_CHANGED_NEW_AREA" }) do cadre:RegisterEvent(ev) end
 cadre:SetScript("OnEvent", function(_, ev, a1, texte, canal, expediteur)
   if ev == "ADDON_LOADED" then
     if a1 == "Compagnie" then
@@ -524,7 +586,7 @@ cadre:SetScript("OnEvent", function(_, ev, a1, texte, canal, expediteur)
     e.moi = moi()
     appliquerMode()
     if a1 or texte then C_Timer.After(3, connexion) end -- connexion ou /reload, pas un écran de chargement
-  elseif ev == "GROUP_ROSTER_UPDATE" then
+  elseif ev == "GROUP_ROSTER_UPDATE" or ev == "ZONE_CHANGED_NEW_AREA" then
     redessiner()
   elseif ev == "PLAYER_REGEN_ENABLED" then
     if differe and ObjectiveTrackerFrame then appliquerSuiviDuJeu(ObjectiveTrackerFrame) end
