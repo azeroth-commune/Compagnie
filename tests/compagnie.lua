@@ -629,11 +629,21 @@ test("suivi par zone : la zone en cours par défaut, une autre zone, toutes ; la
             assertTrue(contient(t, "Les pattes de loup") and contient(t, "La quête de Léo"), "zone en cours : " .. t)
             assertTrue(not contient(t, "Les Défias") and not contient(t, "Sans zone"), "pas les autres zones : " .. t)
             assertEquals("Zone en cours (Forêt d'Elwynn)", CompagnieSuiviZone:GetText())
-            CompagnieSuiviZone:Click() -- l'autre zone de la Compagnie
+            assertTrue(not CompagnieSuiviZones:IsShown(), "la liste est fermée")
+            CompagnieSuiviZone:Click() -- le titre ouvre la liste des zones
+            assertTrue(CompagnieSuiviZones:IsShown(), "le titre ouvre la liste")
+            assertEquals("Zone en cours (Forêt d'Elwynn)", CompagnieSuiviZonesLigne1:GetText())
+            assertEquals("2", CompagnieSuiviZonesLigne1.n:GetText(), "deux quêtes ici")
+            assertEquals("Marche de l'Ouest", CompagnieSuiviZonesLigne2:GetText())
+            assertEquals("Toutes les zones", CompagnieSuiviZonesLigne3:GetText())
+            assertEquals("4", CompagnieSuiviZonesLigne3.n:GetText(), "quatre quêtes en tout")
+            CompagnieSuiviZonesLigne2:Click()
+            assertTrue(not CompagnieSuiviZones:IsShown(), "un choix ferme la liste")
             t = suivi()
             assertEquals("Marche de l'Ouest", CompagnieSuiviZone:GetText())
             assertTrue(contient(t, "Les Défias") and not contient(t, "Les pattes de loup"), t)
-            CompagnieSuiviZone:Click() -- toutes les zones
+            CompagnieSuiviZone:Click()
+            CompagnieSuiviZonesLigne3:Click() -- toutes les zones
             t = suivi()
             assertEquals("Toutes les zones", CompagnieSuiviZone:GetText())
             assertTrue(contient(t, "Les Défias") and contient(t, "Les pattes de loup") and contient(t, "Sans zone"), t)
@@ -642,7 +652,8 @@ test("suivi par zone : la zone en cours par défaut, une autre zone, toutes ; la
             charger()
             assertEquals("Marche de l'Ouest", CompagnieSuiviZone:GetText(), "le choix survit au rechargement")
             assertTrue(not contient(suivi(), "Les pattes de loup"), suivi())
-            CompagnieSuiviZone:Click("RightButton") -- en arrière : zone en cours
+            CompagnieSuiviZone:Click()
+            CompagnieSuiviZonesLigne1:Click() -- retour à la zone en cours
             assertEquals("Zone en cours (Forêt d'Elwynn)", CompagnieSuiviZone:GetText())
             assertNil(CompagnieDB.zoneSuivi)
             -- « Zone en cours » suit le joueur : il entre dans la Marche de l'Ouest.

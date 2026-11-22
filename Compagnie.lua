@@ -248,7 +248,7 @@ end
 -- ZONE_CHANGED_NEW_AREA), true (toutes les zones) ou le nom d'une zone ; gardé par personnage. Il ne change que
 -- l'affichage : le calcul, les envois et les derniers états connus n'en savent rien. Une quête sans zone connue n'est
 -- que dans « Toutes les zones ».
-local zonesCompagnie = {} -- les zones où la Compagnie a des quêtes, triées, au dernier dessin : le choix du bouton
+local zonesCompagnie, comptes = {}, {} -- au dernier dessin : les zones où la Compagnie a des quêtes (triées) et leur nombre
 local function zoneEnCours() local z = GetRealZoneText() return z ~= "" and z or nil end
 local function zoneAffichee() -- nil : toutes (zone en cours inconnue, pendant un chargement : toutes aussi)
   local z = e.db.zoneSuivi
@@ -260,19 +260,13 @@ local function libelleZone()
   if z == nil then return "Zone en cours (" .. (zoneEnCours() or "?") .. ")" end
   return z == true and "Toutes les zones" or z
 end
--- Le choix suivant (pas = 1) ou précédent (-1) : zone en cours → zones de la Compagnie (sauf celle où l'on est) →
--- toutes les zones → zone en cours…
-local function zoneSuivante(pas)
-  local choix, ici = { false }, zoneEnCours()
-  for _, z in ipairs(zonesCompagnie) do if z ~= ici then choix[#choix + 1] = z end end
-  choix[#choix + 1] = true
-  local actuel, i = e.db.zoneSuivi, 0
-  if actuel == nil then actuel = false end
-  for k, v in ipairs(choix) do if v == actuel then i = k end end
-  if i == 0 and pas < 0 then i = 1 end -- la zone choisie n'a plus de quête : on repart du début
-  local v = choix[(i - 1 + pas) % #choix + 1]
-  if v == false then return nil end
-  return v
+-- Les choix de la liste des zones : zone en cours, zones de la Compagnie (sauf celle où l'on est), toutes les zones.
+local function choixDeZone()
+  local ici = zoneEnCours()
+  local choix = { { t = "Zone en cours (" .. (ici or "?") .. ")", n = ici and comptes[ici] or 0 } }
+  for _, z in ipairs(zonesCompagnie) do if z ~= ici then choix[#choix + 1] = { v = z, t = z, n = comptes[z] } end end
+  choix[#choix + 1] = { v = true, t = "Toutes les zones", n = comptes[true] or 0 }
+  return choix
 end
 
 -- Le texte des quêtes de la Compagnie, calculé depuis mon journal et les derniers états connus.
@@ -294,13 +288,15 @@ local function texteSuivi()
   end
   local calc, ordre, lignes = ns.calculer(liste), {}, {}
   local function titre(id) return titres[id] or C_QuestLog.GetTitleForQuestID(id) or ("Quête " .. id) end
-  local voir, zones = zoneAffichee(), {}
+  local voir = zoneAffichee()
+  comptes = { [true] = 0 }
   for id, q in pairs(calc.quetes) do
-    if q.zone then zones[q.zone] = true end
+    comptes[true] = comptes[true] + 1
+    if q.zone then comptes[q.zone] = (comptes[q.zone] or 0) + 1 end
     if not voir or q.zone == voir then ordre[#ordre + 1] = id end
   end
   zonesCompagnie = {}
-  for z in pairs(zones) do zonesCompagnie[#zonesCompagnie + 1] = z end
+  for z in pairs(comptes) do if z ~= true then zonesCompagnie[#zonesCompagnie + 1] = z end end
   table.sort(zonesCompagnie)
   table.sort(ordre, function(a, b) return titre(a) < titre(b) end)
   for _, id in ipairs(ordre) do
@@ -323,6 +319,7 @@ local function dessinerSuivi()
   if not (f and f:IsShown() and e.db.compagnie) then return end
   CompagnieSuiviQuetes:SetText(texteSuivi())
   CompagnieSuiviZone:SetText(libelleZone())
+  CompagnieSuiviZone:SetWidth(CompagnieSuiviZone:GetFontString():GetStringWidth() + 22)
   local h = CompagnieSuiviQuetes:GetStringHeight()
   CompagnieSuiviQuetes:GetParent():SetHeight(math.max(1, h))
   f:SetHeight(math.min(110 + h, UIParent:GetHeight() * 0.6))
@@ -344,26 +341,72 @@ local function ouvrirSuivi()
     f:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", -40, -260) -- sous la minicarte
     f:SetFrameStrata("LOW")
     titreDePartie(f, "À faire", -40)
-    titreDePartie(f, "Quêtes", -72)
-    -- Le filtre par zone : un bouton qui fait défiler les choix (clic droit : en arrière), son choix écrit dessus.
-    local z = CreateFrame("Button", "CompagnieSuiviZone", f, "UIPanelButtonTemplate")
-    z:SetPoint("TOPLEFT", 74, -68)
-    z:SetPoint("TOPRIGHT", -14, -68)
+    -- Le filtre par zone : le titre de la partie Quêtes est la zone affichée ; un clic ouvre juste dessous la liste des
+    -- zones de la Compagnie (avec leur nombre de quêtes), un clic en choisit une et la liste se ferme.
+    local z = CreateFrame("Button", "CompagnieSuiviZone", f)
+    z:SetPoint("TOPLEFT", 14, -68)
     z:SetHeight(20)
-    z:SetNormalFontObject("GameFontNormalSmall")
-    z:SetHighlightFontObject("GameFontHighlightSmall")
-    z:RegisterForClicks("LeftButtonUp", "RightButtonUp")
-    z:SetScript("OnClick", function(_, b)
-      e.db.zoneSuivi = zoneSuivante(b == "RightButton" and -1 or 1)
-      dessinerSuivi()
+    z:SetNormalFontObject("GameFontNormal")
+    z:SetHighlightFontObject("GameFontHighlight")
+    z:SetText(" ")
+    z:GetFontString():ClearAllPoints()
+    z:GetFontString():SetPoint("LEFT")
+    local fleche = z:CreateTexture(nil, "OVERLAY")
+    fleche:SetTexture("Interface\\ChatFrame\\ChatFrameExpandArrow")
+    fleche:SetSize(14, 14)
+    fleche:SetRotation(-math.pi / 2) -- la flèche « > » tournée vers le bas
+    fleche:SetPoint("LEFT", z:GetFontString(), "RIGHT", 4, 0)
+    local liste = CreateFrame("Frame", "CompagnieSuiviZones", f, "BackdropTemplate")
+    liste:SetPoint("TOPLEFT", z, "BOTTOMLEFT", -4, -2)
+    liste:SetWidth(250)
+    liste:SetFrameStrata("MEDIUM") -- au-dessus des quêtes qui défilent (le suivi est en LOW)
+    liste:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
+    liste:SetBackdropColor(0.04, 0.04, 0.06, 1)
+    liste:SetBackdropBorderColor(0.66, 0.56, 1.00, 0.5)
+    liste:EnableMouse(true)
+    liste:Hide()
+    liste.lignes = {}
+    local function remplir()
+      local choix = choixDeZone()
+      for i, c in ipairs(choix) do
+        local l = liste.lignes[i]
+        if not l then
+          l = CreateFrame("Button", "CompagnieSuiviZonesLigne" .. i, liste)
+          l:SetHeight(18)
+          l:SetPoint("TOPLEFT", 6, -4 - (i - 1) * 18)
+          l:SetPoint("RIGHT", -6, 0)
+          l:SetNormalFontObject("GameFontHighlightSmall")
+          l:SetHighlightTexture("Interface\\Buttons\\WHITE8x8")
+          l:GetHighlightTexture():SetVertexColor(0.66, 0.56, 1.00, 0.2)
+          l:SetText(" ")
+          l:GetFontString():ClearAllPoints()
+          l:GetFontString():SetPoint("LEFT", 14, 0)
+          l:GetFontString():SetPoint("RIGHT", -28, 0)
+          l:GetFontString():SetJustifyH("LEFT")
+          l.n = l:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+          l.n:SetPoint("RIGHT")
+          l.coche = l:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+          l.coche:SetPoint("LEFT")
+          l.coche:SetText("•")
+          l:SetScript("OnClick", function(self)
+            e.db.zoneSuivi = self.v
+            liste:Hide()
+            dessinerSuivi()
+          end)
+          liste.lignes[i] = l
+        end
+        l.v = c.v
+        l:SetText(c.t)
+        l.n:SetText(c.n or 0)
+        l.coche:SetShown(c.v == e.db.zoneSuivi)
+        l:Show()
+      end
+      for i = #choix + 1, #liste.lignes do liste.lignes[i]:Hide() end
+      liste:SetHeight(#choix * 18 + 8)
+    end
+    z:SetScript("OnClick", function()
+      if liste:IsShown() then liste:Hide() else remplir(); liste:Show() end
     end)
-    z:SetScript("OnEnter", function(self)
-      GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
-      GameTooltip:SetText("Quêtes affichées")
-      GameTooltip:AddLine("Clic : zone suivante ; clic droit : précédente.", 1, 1, 1)
-      GameTooltip:Show()
-    end)
-    z:SetScript("OnLeave", function() GameTooltip:Hide() end)
     -- Beaucoup de quêtes : la fenêtre s'arrête à 60 % de l'écran et les quêtes défilent (molette).
     local defil = CreateFrame("ScrollFrame", "CompagnieSuiviDefil", f, "UIPanelScrollFrameTemplate")
     defil:SetPoint("TOPLEFT", 14, -92)
