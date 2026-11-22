@@ -248,15 +248,24 @@ end)
 ---------------------------------------------------------------------------------------------------
 -- Le mode Compagnie et l'échange des états (#4).
 
--- Mon journal le temps de f : quetes = { { id, titre, finie, objectifs = { { text, numFulfilled, numRequired }, … } }, … }
+-- Mon journal le temps de f : quetes = { { id, titre, finie, zone, objectifs = { { text, numFulfilled, numRequired }, … } }, … }
 -- (C_QuestLog.GetInfo, GetQuestObjectives, IsComplete bouchonnés ; info.isComplete reste nil comme sur Forever).
+-- Le journal range les quêtes sous des en-têtes de zone (isHeader), dans l'ordre donné ; sans zone, sous ICI, la zone où
+-- je suis (GetRealZoneText bouchonné : ici, ou ICI).
+local ICI, ici = "Forêt d'Elwynn", nil
 local function avecJournal(quetes, f)
     local q, g = C_QuestLog, {}
     for _, n in ipairs({ "GetInfo", "GetQuestObjectives", "IsComplete", "IsQuestFlaggedCompleted", "GetTitleForQuestID",
         "IsUnitOnQuest" }) do g[n] = q[n] end
-    local parId = {}
-    for _, x in ipairs(quetes) do parId[x.id] = x end
-    q.GetInfo = function(i) local x = quetes[i] return x and { questID = x.id, title = x.titre, isHeader = false } end
+    local parId, lignes, zone = {}, {}, nil
+    for _, x in ipairs(quetes) do
+        parId[x.id] = x
+        if (x.zone or ICI) ~= zone then zone = x.zone or ICI; lignes[#lignes + 1] = { title = zone, isHeader = true } end
+        lignes[#lignes + 1] = { questID = x.id, title = x.titre, isHeader = false }
+    end
+    local zoneDuJeu = GetRealZoneText
+    GetRealZoneText = function() return ici or ICI end
+    q.GetInfo = function(i) return lignes[i] end
     q.GetQuestObjectives = function(id)
         local t = {}
         for k, o in ipairs(parId[id] and parId[id].objectifs or {}) do
@@ -270,6 +279,7 @@ local function avecJournal(quetes, f)
     q.IsUnitOnQuest = function() return nil end
     local ok, err = pcall(f)
     for n, fn in pairs(g) do q[n] = fn end
+    GetRealZoneText, ici = zoneDuJeu, nil
     if not ok then error(err, 0) end
 end
 local function pattes(fait)
@@ -315,13 +325,13 @@ test("le suivi se dessine depuis une Compagnie fabriquée : 5/8, en attente de L
             assertTrue(not contient(t, "À rendre"), t)
             assertTrue(contient(t, "Raptor flagellant : 1/10 |4personnage tué:personnages tués;"), "texte du jeu, compte commun : " .. t)
             -- Léo a fini (son état arrive par chuchotement) : À rendre chez tout le monde.
-            chuchote("E;essai;1/1/1;10#1001:1:8/8;95789:0:1/10#")
+            chuchote("E;essai;1/1/1;10#1001:1:8/8;95789:0:1/10##")
             assertEquals(1, CompagnieDB.etats[LEO].quetes[1001].objectifs[1].fait == 8 and 1 or 0, "état reçu gardé")
             t = suivi()
             assertTrue(contient(t, "Patte de loup : 8/8") and contient(t, "À rendre"), t)
             assertTrue(not contient(t, "En attente"), "Léo n'est pas nommé : " .. t)
             -- Un état d'un non-membre ne change rien.
-            chuchote("E;essai;1/1/1;10#1001:0:0/8#", "Zoé Pierre")
+            chuchote("E;essai;1/1/1;10#1001:0:0/8##", "Zoé Pierre")
             assertTrue(contient(suivi(), "À rendre"), "non-membre ignoré")
         end)
     end)
@@ -371,7 +381,7 @@ test("le dernier état connu d'un absent est retrouvé après un /reload et comp
             fabriquer({ guid = LEO, nom = "Léo Lame" })
             CompagnieDB.etats = nil
             charger()
-            chuchote("E;essai;1/1/1;10#1001:0:5/8#")
+            chuchote("E;essai;1/1/1;10#1001:0:5/8##")
             -- /reload : CompagnieDB relue (une copie, comme le fichier de sauvegarde), Léo ne s'est pas reconnecté.
             local function copie(t)
                 if type(t) ~= "table" then return t end
@@ -406,7 +416,7 @@ test("une demande d'état reçoit le mien : au groupe du jeu, ou chuchoté hors 
             local m = envoyes[#envoyes]
             assertEquals("WHISPER", m.canal)
             assertEquals("Léo Lame", m.cible)
-            assertTrue(m.texte:find("^E;essai;%d+/1/1;%d+#1001:0:3/8#$") ~= nil, m.texte)
+            assertTrue(m.texte:find("^E;essai;%d+/1/1;%d+#1001:0:3/8##Forêt d'Elwynn=1001$") ~= nil, m.texte)
         end)
         avecLeo(function(envoyes)
             recu("D;essai")
@@ -427,7 +437,7 @@ test("un membre hors du groupe entendu puis muet : redemandé, absent au bout de
             CompagnieDB.etats = nil
             charger()
             ecouler(5)
-            chuchote("E;essai;1/1/1;10#1001:0:5/8#")
+            chuchote("E;essai;1/1/1;10#1001:0:5/8##")
             assertTrue(not contient(suivi(), "En attente"), "Léo vient d'écrire : présent")
             local n = #envoyes
             ecouler(125)
@@ -438,7 +448,7 @@ test("un membre hors du groupe entendu puis muet : redemandé, absent au bout de
             end
             assertTrue(demandes >= 1 and demandes <= 3, "demandé une fois par minute de silence : " .. demandes)
             assertTrue(contient(suivi(), "En attente de Léo"), "sans réponse depuis 2 min : absent, " .. suivi())
-            chuchote("E;essai;2/1/1;10#1001:0:5/8#") -- il répond
+            chuchote("E;essai;2/1/1;10#1001:0:5/8##") -- il répond
             assertTrue(not contient(suivi(), "En attente"), "de nouveau présent")
         end)
     end)
@@ -449,7 +459,7 @@ test("un membre du groupe déconnecté n'est pas présent, même entendu il y a 
     avecJournal({ pattes(8) }, function()
         fabriquer({ guid = LEO, nom = "Léo Lame" })
         charger()
-        avecGroupe({}, false, function() chuchote("E;essai;1/1/1;10#1001:0:5/8#") end)
+        avecGroupe({}, false, function() chuchote("E;essai;1/1/1;10#1001:0:5/8##") end)
         avecGroupe({ { LEO, "Léo", "Lame", horsLigne = true } }, false, function()
             evenement("GROUP_ROSTER_UPDATE")
             assertTrue(contient(suivi(), "En attente de Léo"), suivi())
@@ -599,5 +609,53 @@ test("beaucoup de quêtes : le suivi s'arrête à 60 % de l'écran et les quête
             assertTrue(CompagnieSuiviDefil:GetVerticalScrollRange() > 0, "les quêtes défilent")
         end)
     end)
+    eteindre()
+end)
+
+test("suivi par zone : la zone en cours par défaut, une autre zone, toutes ; la quête de Léo ; le choix survit au rechargement", function()
+    avecGroupe({}, false, function()
+        avecJournal({ pattes(3), { id = 3001, titre = "Les Défias", zone = "Marche de l'Ouest", objectifs = { { "Défias : 1/10", 1, 10 } } } }, function()
+            fabriquer({ guid = LEO, nom = "Léo Lame" })
+            CompagnieDB.modeCompagnie, CompagnieDB.zoneSuivi = nil, nil
+            -- Léo a les deux quêtes, plus une que je n'ai pas : rangée dans son journal sous Forêt d'Elwynn.
+            CompagnieDB.etats = { [LEO] = { niveau = 10, rendues = {}, quetes = {
+                [1001] = { finie = false, objectifs = { { fait = 3, total = 8 } } },
+                [3001] = { finie = false, objectifs = { { fait = 1, total = 10 } } },
+                [4001] = { finie = false, objectifs = {}, zone = "Forêt d'Elwynn" },
+                [5001] = { finie = false, objectifs = {} } } } } -- une quête dont la zone n'est pas connue
+            C_QuestLog.GetTitleForQuestID = function(id) return ({ [4001] = "La quête de Léo", [5001] = "Sans zone" })[id] end
+            charger()
+            local t = suivi()
+            assertTrue(contient(t, "Les pattes de loup") and contient(t, "La quête de Léo"), "zone en cours : " .. t)
+            assertTrue(not contient(t, "Les Défias") and not contient(t, "Sans zone"), "pas les autres zones : " .. t)
+            assertEquals("Zone en cours (Forêt d'Elwynn)", CompagnieSuiviZone:GetText())
+            CompagnieSuiviZone:Click() -- l'autre zone de la Compagnie
+            t = suivi()
+            assertEquals("Marche de l'Ouest", CompagnieSuiviZone:GetText())
+            assertTrue(contient(t, "Les Défias") and not contient(t, "Les pattes de loup"), t)
+            CompagnieSuiviZone:Click() -- toutes les zones
+            t = suivi()
+            assertEquals("Toutes les zones", CompagnieSuiviZone:GetText())
+            assertTrue(contient(t, "Les Défias") and contient(t, "Les pattes de loup") and contient(t, "Sans zone"), t)
+            -- Le choix est gardé par personnage : retrouvé après un /reload.
+            CompagnieDB.zoneSuivi = "Marche de l'Ouest"
+            charger()
+            assertEquals("Marche de l'Ouest", CompagnieSuiviZone:GetText(), "le choix survit au rechargement")
+            assertTrue(not contient(suivi(), "Les pattes de loup"), suivi())
+            CompagnieSuiviZone:Click("RightButton") -- en arrière : zone en cours
+            assertEquals("Zone en cours (Forêt d'Elwynn)", CompagnieSuiviZone:GetText())
+            assertNil(CompagnieDB.zoneSuivi)
+            -- « Zone en cours » suit le joueur : il entre dans la Marche de l'Ouest.
+            ici = "Marche de l'Ouest"
+            evenement("ZONE_CHANGED_NEW_AREA")
+            assertEquals("Zone en cours (Marche de l'Ouest)", CompagnieSuiviZone:GetText())
+            assertTrue(contient(suivi(), "Les Défias") and not contient(suivi(), "Les pattes de loup"), suivi())
+            -- Une zone sans quête de la Compagnie : le suivi le dit.
+            ici = "Duskwood"
+            evenement("ZONE_CHANGED_NEW_AREA")
+            assertTrue(contient(suivi(), "Aucune quête de la Compagnie dans cette zone"), suivi())
+        end)
+    end)
+    CompagnieDB.zoneSuivi = nil
     eteindre()
 end)
