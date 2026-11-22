@@ -1,16 +1,21 @@
 -- Compagnie, les états des membres : encodage, réception, dernier état connu, envoi regroupé. La logique seule, sans
 -- aucun appel à l'API du jeu (vérifié par check.lua) ; Compagnie.lua lit mon journal en direct et transporte les messages.
--- Un état : { niveau = 35, quetes = { [idQuête] = { finie = false, objectifs = { { fait = 2, total = 10 }, … } } },
+-- Un état : { niveau = 35, quetes = { [idQuête] = { finie = false, objectifs = { { fait = 2, total = 10 }, … }, zone = "…" } },
 --             rendues = { [idQuête] = true } }
 -- Le texte des objectifs ne part jamais (il porte un code de grammaire du jeu, « |4…; ») : seulement les nombres, dans
 -- l'ordre des objectifs ; chacun retrouve le texte dans son propre journal (Calcul.lua le prend chez qui l'a).
--- Corps encodé : « niveau#quête;quête…#rendue,rendue… », une quête « id:finie(0|1)[:fait/total…] », ids triés.
+-- Corps encodé : « niveau#quête;quête…#rendue,rendue…[#zone=id,id;zone=id…] », une quête « id:finie(0|1)[:fait/total…] »,
+-- ids triés. Le 4e champ (#13) range les quêtes par zone (l'en-tête de zone de mon journal), zones triées ; il n'est là
+-- que si une quête a une zone. Un client de #12 (trois champs exigés) lit un état sans zone et ignore en entier, sans
+-- erreur, un état avec zones. Une zone : 1 à MAX_ZONE octets, ni caractère de contrôle, ni « | » (codes du chat), ni
+-- séparateur du format ; un en-tête de mon journal qui ne l'est pas ne part pas (la quête part sans zone).
 -- Messages d'add-on (préfixe Compagnie) : « E;idCompagnie;envoi/i/n;morceau » (un état en n morceaux bornés à 255
 -- octets) et « D;idCompagnie » (demande d'état). L'expéditeur (de) est le GUID que Compagnie.lua tient du serveur.
 -- Donnée reçue entre membres (CONTEXT-MAP) : servie telle quelle, mais lue strictement (un champ mal formé et tout l'état
 -- est rejeté ; rien n'est jamais exécuté ni interprété) et bornée (taille, nombre de morceaux, débit par expéditeur).
 local _, ns = ...
 local MAX_QUETES, MAX_OBJECTIFS, MAX_RENDUES, MAX_MORCEAUX, DEBIT = 60, 20, 300, 10, 60 -- DEBIT : messages / minute
+local MAX_ZONE = 48 -- octets : « Contreforts de Hautebrande » en fait 26
 ns.DELAI_ENVOI = 3 -- secondes : une rafale d'événements part en un seul envoi
 
 -- Les morceaux de s séparés par sep (un caractère), vides compris.
@@ -34,21 +39,29 @@ local function trier(t)
   return ids
 end
 
+local function zoneValide(z)
+  return type(z) == "string" and #z >= 1 and #z <= MAX_ZONE and not z:find("[%c|#;:,/=]")
+end
+
 function ns.encoder(etat)
-  local quetes, rendues = {}, {}
+  local quetes, rendues, zones = {}, {}, {}
   for _, id in ipairs(trier(etat.quetes)) do
     local q, t = etat.quetes[id], { id, etat.quetes[id].finie and 1 or 0 }
     for _, o in ipairs(q.objectifs or {}) do t[#t + 1] = o.fait .. "/" .. o.total end
     quetes[#quetes + 1] = table.concat(t, ":")
+    if zoneValide(q.zone) then zones[q.zone] = zones[q.zone] or {}; table.insert(zones[q.zone], id) end
   end
   for _, id in ipairs(trier(etat.rendues)) do rendues[#rendues + 1] = id end
-  return (etat.niveau or 0) .. "#" .. table.concat(quetes, ";") .. "#" .. table.concat(rendues, ",")
+  local corps = (etat.niveau or 0) .. "#" .. table.concat(quetes, ";") .. "#" .. table.concat(rendues, ",")
+  local parZone = {}
+  for _, z in ipairs(trier(zones)) do parZone[#parZone + 1] = z .. "=" .. table.concat(zones[z], ",") end
+  return #parZone > 0 and corps .. "#" .. table.concat(parZone, ";") or corps
 end
 
 -- L'état, ou nil au moindre champ mal formé.
 function ns.decoder(corps)
   local f = couper(corps, "#")
-  local niveau = #f == 3 and entier(f[1], 200)
+  local niveau = (#f == 3 or #f == 4) and entier(f[1], 200)
   if not niveau or niveau < 1 then return end
   local etat = { niveau = niveau, quetes = {}, rendues = {} }
   local liste = f[2] == "" and {} or couper(f[2], ";")
@@ -72,6 +85,18 @@ function ns.decoder(corps)
     local id = entier(r, 2147483647)
     if not id or id < 1 then return end
     etat.rendues[id] = true
+  end
+  if not f[4] then return etat end
+  local vues = {}
+  for _, champ in ipairs(couper(f[4], ";")) do -- f[4] vide (« …## ») : une zone vide, rejetée
+    local z, ids = champ:match("^([^=]*)=(.*)$")
+    if not (z and zoneValide(z)) or vues[z] or ids == "" then return end
+    vues[z] = true
+    for _, r in ipairs(couper(ids, ",")) do
+      local q = etat.quetes[entier(r, 2147483647) or 0]
+      if not q or q.zone then return end -- une quête absente de l'état, ou rangée deux fois
+      q.zone = z
+    end
   end
   return etat
 end

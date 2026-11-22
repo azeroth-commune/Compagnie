@@ -3,7 +3,8 @@
 --   { nom = "Léo", niveau = 10, absent = true,
 --     quetes = { [idQuête] = { finie = false, objectifs = { { texte = "Patte de loup", fait = 5, total = 8 }, … } } },
 --     rendues = { [idQuête] = true } }
--- Sortie : { niveau = 9, quetes = { [idQuête] = { objectifs = { … }, aRendre = false, enAttente = { "Léo" } } } }
+--     (une quête peut porter sa zone : zone = "Forêt d'Elwynn")
+-- Sortie : { niveau = 9, quetes = { [idQuête] = { objectifs = { … }, aRendre = false, enAttente = { "Léo" }, zone = … } } }
 -- Les quêtes de la Compagnie sont celles qu'au moins un membre a en cours. Pour chacune, membre par membre :
 --   - en cours : son avancement compte, objectif par objectif (le moins avancé l'emporte) ;
 --   - déjà rendue : il ne retient plus la Compagnie ;
@@ -26,6 +27,7 @@ function ns.calculer(membres)
         if not c or o.fait < c.fait then commune.objectifs[i] = { texte = o.texte or c and c.texte, fait = o.fait, total = o.total }
         elseif not c.texte then c.texte = o.texte end -- le texte ne vient que de mon journal (Etats.lua) : pris chez qui l'a
       end
+      commune.zone = commune.zone or q and q.zone -- la zone (affichage seulement) : prise chez qui l'a
       if not (q and q.finie or m.rendues and m.rendues[id]) then
         commune.aRendre = false
         commune.enAttente[#commune.enAttente + 1] = m.nom
