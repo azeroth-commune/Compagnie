@@ -2,10 +2,11 @@
 ## Title: Compagnie
 ## Category: Quests
 ## Category-frFR: Quêtes
-## Notes: Une Compagnie : une équipe fixe de 2 à 5 personnages qui font toute l'aventure ensemble. Fonde-la en un clic depuis ton groupe du jeu (chacun accepte ou refuse), vois ses membres et qui est présent ou absent ; quitter ou retirer un membre, sans chef. /compagnie
+## Notes: Une Compagnie : une équipe fixe de 2 à 5 personnages qui font toute l'aventure ensemble. Fonde-la en un clic depuis ton groupe du jeu (chacun accepte ou refuse). Les add-ons des membres s'échangent leur état ; le mode Compagnie remplace le suivi des quêtes du jeu par l'avancement commun : une quête n'est à rendre que quand tout le monde a fini, un absent compte avec son dernier état connu. /compagnie, /compagnie suivi
 ## Version: 0.1.0
 ## IconTexture: Interface\Icons\INV_Misc_Note_01
 ## Dependencies: AzerothCommune
+## OptionalDeps: Questie
 ## SavedVariablesPerCharacter: CompagnieDB
 Calcul.lua
 Membres.lua

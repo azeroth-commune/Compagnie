@@ -49,8 +49,8 @@ local function avecGroupe(autres, raid, f)
     UnitGUID = function(u) local a = autre(u) if a then return a[1] end return g.UnitGUID(u) end
     UnitName = function(u) local a = autre(u) if a then return a[2], a[3] end return g.UnitName(u) end
     UnitIsConnected = function(u) local a = autre(u) if a then return a[1] ~= nil end return g.UnitIsConnected(u) end
-    C_ChatInfo.SendAddonMessage = function(prefixe, texte, canal)
-        envoyes[#envoyes + 1] = { prefixe = prefixe, texte = texte, canal = canal }
+    C_ChatInfo.SendAddonMessage = function(prefixe, texte, canal, cible)
+        envoyes[#envoyes + 1] = { prefixe = prefixe, texte = texte, canal = canal, cible = cible }
     end
     local ok, err = pcall(f, envoyes)
     GetNumGroupMembers, IsInRaid, IsInGroup, UnitGUID, UnitName, UnitIsConnected =
@@ -241,4 +241,205 @@ test("la Compagnie est retrouvée telle quelle après un /reload (CompagnieDB re
     assertEquals("Léo Lame", l[2].nom)
     CompagnieFrame:Hide()
     CompagnieDB.compagnie = nil
+end)
+
+---------------------------------------------------------------------------------------------------
+-- Le mode Compagnie et l'échange des états (#4).
+
+-- Mon journal le temps de f : quetes = { { id, titre, finie, objectifs = { { text, numFulfilled, numRequired }, … } }, … }
+-- (C_QuestLog.GetInfo, GetQuestObjectives, IsComplete bouchonnés ; info.isComplete reste nil comme sur Forever).
+local function avecJournal(quetes, f)
+    local q, g = C_QuestLog, {}
+    for _, n in ipairs({ "GetInfo", "GetQuestObjectives", "IsComplete", "IsQuestFlaggedCompleted", "GetTitleForQuestID",
+        "IsUnitOnQuest" }) do g[n] = q[n] end
+    local parId = {}
+    for _, x in ipairs(quetes) do parId[x.id] = x end
+    q.GetInfo = function(i) local x = quetes[i] return x and { questID = x.id, title = x.titre, isHeader = false } end
+    q.GetQuestObjectives = function(id)
+        local t = {}
+        for k, o in ipairs(parId[id] and parId[id].objectifs or {}) do
+            t[k] = { text = o[1], numFulfilled = o[2], numRequired = o[3], finished = o[2] >= o[3] }
+        end
+        return t
+    end
+    q.IsComplete = function(id) return parId[id] and parId[id].finie or false end
+    q.IsQuestFlaggedCompleted = function() return false end
+    q.GetTitleForQuestID = function() return nil end
+    q.IsUnitOnQuest = function() return nil end
+    local ok, err = pcall(f)
+    for n, fn in pairs(g) do q[n] = fn end
+    if not ok then error(err, 0) end
+end
+local function pattes(fait)
+    return { id = 1001, titre = "Les pattes de loup", finie = fait == 8, objectifs = { { "Patte de loup : " .. fait .. "/8", fait, 8 } } }
+end
+local RAPTORS = { id = 95789, titre = "Les raptors", objectifs = { { "Raptor flagellant : 2/10 |4personnage tué:personnages tués;", 2, 10 } } }
+
+local function charger() CompagnieMessages:GetScript("OnEvent")(CompagnieMessages, "ADDON_LOADED", "Compagnie") end
+local function chuchote(texte, de)
+    CompagnieMessages:GetScript("OnEvent")(CompagnieMessages, "CHAT_MSG_ADDON", "Compagnie", texte, "WHISPER", de or "Léo Lame")
+end
+local function suivi() return CompagnieSuiviQuetes:GetText() or "" end
+local function contient(t, motif) return t:find(motif, 1, true) ~= nil end
+local function eteindre() -- mode éteint, plus de Compagnie : le suivi du jeu revient pour les tests suivants
+    CompagnieDB.compagnie, CompagnieDB.etats, CompagnieDB.modeCompagnie = nil, nil, nil
+    charger()
+end
+
+test("le suivi se dessine depuis une Compagnie fabriquée : 5/8, en attente de Léo ; À rendre quand tout le monde a fini", function()
+    avecGroupe({}, false, function()
+        avecJournal({ pattes(8), RAPTORS }, function()
+            fabriquer({ guid = LEO, nom = "Léo Lame" })
+            CompagnieDB.modeCompagnie = nil -- activé par défaut dans une Compagnie
+            CompagnieDB.etats = { [LEO] = { niveau = 10, rendues = {}, quetes = {
+                [1001] = { finie = false, objectifs = { { fait = 5, total = 8 } } },
+                [95789] = { finie = false, objectifs = { { fait = 1, total = 10 } } } } } }
+            charger()
+            assertTrue(CompagnieSuiviFrame:IsShown(), "le suivi s'ouvre en mode Compagnie")
+            local t = suivi()
+            assertTrue(contient(t, "Les pattes de loup"), t)
+            assertTrue(contient(t, "Patte de loup : 5/8"), "avancement commun : " .. t)
+            assertTrue(not contient(t, "8/8"), "mon avancement n'est pas affiché : " .. t)
+            assertTrue(contient(t, "En attente de Léo"), t)
+            assertTrue(not contient(t, "À rendre"), t)
+            assertTrue(contient(t, "Raptor flagellant : 1/10 |4personnage tué:personnages tués;"), "texte du jeu, compte commun : " .. t)
+            -- Léo a fini (son état arrive par chuchotement) : À rendre chez tout le monde.
+            chuchote("E;essai;1/1/1;10#1001:1:8/8;95789:0:1/10#")
+            assertEquals(1, CompagnieDB.etats[LEO].quetes[1001].objectifs[1].fait == 8 and 1 or 0, "état reçu gardé")
+            t = suivi()
+            assertTrue(contient(t, "Patte de loup : 8/8") and contient(t, "À rendre"), t)
+            assertTrue(not contient(t, "En attente"), "Léo n'est pas nommé : " .. t)
+            -- Un état d'un non-membre ne change rien.
+            chuchote("E;essai;1/1/1;10#1001:0:0/8#", "Zoé Pierre")
+            assertTrue(contient(suivi(), "À rendre"), "non-membre ignoré")
+        end)
+    end)
+    eteindre()
+end)
+
+test("le suivi du jeu est masqué en mode Compagnie et revient quand on l'éteint", function()
+    eteindre()
+    ObjectiveTrackerFrame:Show()
+    assertTrue(ObjectiveTrackerFrame:IsShown())
+    avecGroupe({}, false, function()
+        avecJournal({ pattes(3) }, function()
+            fabriquer({ guid = LEO, nom = "Léo Lame" })
+            charger()
+            assertTrue(not ObjectiveTrackerFrame:IsShown(), "masqué en mode Compagnie")
+            ObjectiveTrackerFrame:Show() -- le jeu le remontre
+            assertTrue(not ObjectiveTrackerFrame:IsShown(), "recaché aussitôt")
+            dits(function() SlashCmdList.COMPAGNIE("suivi") end)
+            assertEquals(false, CompagnieDB.modeCompagnie)
+            assertTrue(ObjectiveTrackerFrame:IsShown(), "éteint : le suivi du jeu revient")
+            assertTrue(not CompagnieSuiviFrame:IsShown())
+            -- Le bouton de la fenêtre des membres porte l'état du mode, et le bascule.
+            SlashCmdList.COMPAGNIE("")
+            assertTrue(contient(CompagnieModeBouton:GetText(), "non"), CompagnieModeBouton:GetText())
+            CompagnieModeBouton:Click()
+            assertTrue(contient(CompagnieModeBouton:GetText(), "oui"), CompagnieModeBouton:GetText())
+            assertTrue(not ObjectiveTrackerFrame:IsShown() and CompagnieSuiviFrame:IsShown(), "rallumé")
+            CompagnieFrame:Hide()
+            -- La croix du suivi éteint le mode.
+            dits(function() CompagnieSuiviFrame:Hide() end)
+            assertEquals(false, CompagnieDB.modeCompagnie)
+            assertTrue(ObjectiveTrackerFrame:IsShown(), "fermé : le suivi du jeu revient")
+            -- Quitter la Compagnie le rend aussi.
+            CompagnieDB.modeCompagnie = nil
+            charger()
+            assertTrue(not ObjectiveTrackerFrame:IsShown())
+            dits(function() SlashCmdList.COMPAGNIE("quitter") end)
+            assertTrue(ObjectiveTrackerFrame:IsShown(), "plus de Compagnie : le suivi du jeu revient")
+        end)
+    end)
+    eteindre()
+end)
+
+test("le dernier état connu d'un absent est retrouvé après un /reload et compte dans l'avancement commun", function()
+    avecGroupe({}, false, function()
+        avecJournal({ pattes(8) }, function()
+            fabriquer({ guid = LEO, nom = "Léo Lame" })
+            CompagnieDB.etats = nil
+            charger()
+            chuchote("E;essai;1/1/1;10#1001:0:5/8#")
+            -- /reload : CompagnieDB relue (une copie, comme le fichier de sauvegarde), Léo ne s'est pas reconnecté.
+            local function copie(t)
+                if type(t) ~= "table" then return t end
+                local c = {}
+                for k, v in pairs(t) do c[copie(k)] = copie(v) end
+                return c
+            end
+            CompagnieDB = copie(CompagnieDB)
+            charger()
+            assertEquals(5, CompagnieDB.etats[LEO].quetes[1001].objectifs[1].fait)
+            assertTrue(contient(suivi(), "Patte de loup : 5/8"), suivi())
+        end)
+    end)
+    eteindre()
+end)
+
+-- Le temps s'écoule de s secondes (horloge manuelle du simulateur) : les envois regroupés programmés partent.
+local function ecouler(s)
+    pcall(A_Admin.SetManualClock, GetTime()) -- déjà manuelle : sans effet
+    A_Admin.AdvanceTime(s)
+end
+
+test("une demande d'état reçoit le mien : au groupe du jeu, ou chuchoté hors du groupe ; pas à un non-membre", function()
+    avecJournal({ pattes(3) }, function()
+        avecGroupe({}, false, function(envoyes)
+            fabriquer({ guid = LEO, nom = "Léo Lame" })
+            charger()
+            ecouler(5) -- un envoi resté programmé par un test précédent
+            local n = #envoyes
+            chuchote("D;essai", "Zoé Pierre")
+            ecouler(5)
+            assertEquals(n, #envoyes, "non-membre : rien")
+            chuchote("D;essai")
+            assertEquals(n, #envoyes, "regroupé : rien ne part tout de suite")
+            ecouler(5)
+            assertEquals(n + 1, #envoyes, "un seul message")
+            local m = envoyes[#envoyes]
+            assertEquals("WHISPER", m.canal)
+            assertEquals("Léo Lame", m.cible)
+            assertTrue(m.texte:find("^E;essai;%d+/1/1;%d+#1001:0:3/8#$") ~= nil, m.texte)
+        end)
+        avecLeo(function(envoyes)
+            recu("D;essai")
+            ecouler(5)
+            local m = envoyes[#envoyes]
+            assertNotNil(m, "un état part")
+            assertEquals("PARTY", m.canal)
+            assertTrue(m.texte:find("^E;essai;") ~= nil, m.texte)
+        end)
+    end)
+    eteindre()
+end)
+
+test("la suggestion Questie n'apparaît qu'une fois et ne modifie aucune option de Questie", function()
+    local ecrits = {}
+    local profil = setmetatable({}, { __index = { trackerEnabled = true },
+        __newindex = function(t, k, v) ecrits[#ecrits + 1] = k; rawset(t, k, v) end })
+    Questie = { db = { profile = profil } }
+    local ok, err = pcall(function()
+        avecGroupe({}, false, function()
+            avecJournal({}, function()
+                fabriquer({ guid = LEO, nom = "Léo Lame" })
+                CompagnieDB.questieSuggere = nil
+                local t = dits(charger)
+                assertTrue(contient(t, "Questie"), "suggestion : " .. t)
+                t = dits(function()
+                    charger()
+                    SlashCmdList.COMPAGNIE("suivi")
+                    SlashCmdList.COMPAGNIE("suivi")
+                    CompagnieDB.questieSuggere = CompagnieDB.questieSuggere -- /reload : le drapeau est sauvegardé
+                    charger()
+                end)
+                assertTrue(not contient(t, "Questie"), "une seule fois : " .. t)
+            end)
+        end)
+    end)
+    Questie = nil
+    eteindre()
+    if not ok then error(err, 0) end
+    assertEquals(0, #ecrits, "aucune option de Questie écrite")
+    assertNil(next(profil), "profil de Questie intact")
 end)
