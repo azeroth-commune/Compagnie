@@ -9,4 +9,5 @@
 ## SavedVariablesPerCharacter: CompagnieDB
 Calcul.lua
 Membres.lua
+Etats.lua
 Compagnie.lua

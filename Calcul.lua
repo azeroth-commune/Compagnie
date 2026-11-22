@@ -8,13 +8,14 @@
 --   - en cours : son avancement compte, objectif par objectif (le moins avancé l'emporte) ;
 --   - déjà rendue : il ne retient plus la Compagnie ;
 --   - ni l'un ni l'autre : il compte à 0 et la Compagnie l'attend (jamais à rendre sans lui).
+-- Le texte d'un objectif (affichage seulement) est pris chez le membre qui l'a, quel que soit son avancement.
 -- Un absent compte comme les autres, avec son dernier état connu : le calcul ne lit donc pas « absent ».
 local _, ns = ...
 
 function ns.calculer(membres)
   local quetes, niveau = {}, nil
   for _, m in ipairs(membres) do
-    if not niveau or m.niveau < niveau then niveau = m.niveau end
+    if m.niveau and (not niveau or m.niveau < niveau) then niveau = m.niveau end -- un membre jamais entendu : sans niveau
     for id in pairs(m.quetes or {}) do quetes[id] = { objectifs = {}, aRendre = true, enAttente = {} } end
   end
   for id, commune in pairs(quetes) do
@@ -22,7 +23,8 @@ function ns.calculer(membres)
       local q = m.quetes and m.quetes[id]
       for i, o in ipairs(q and q.objectifs or {}) do
         local c = commune.objectifs[i]
-        if not c or o.fait < c.fait then commune.objectifs[i] = { texte = o.texte, fait = o.fait, total = o.total } end
+        if not c or o.fait < c.fait then commune.objectifs[i] = { texte = o.texte or c and c.texte, fait = o.fait, total = o.total }
+        elseif not c.texte then c.texte = o.texte end -- le texte ne vient que de mon journal (Etats.lua) : pris chez qui l'a
       end
       if not (q and q.finie or m.rendues and m.rendues[id]) then
         commune.aRendre = false

@@ -297,3 +297,160 @@ assert(not dit(c[V], "Personne n'a accepté"), "Léo a accepté : " .. dernier(c
 assert(noms(c[V]) == "Virgile Marteau,Léo Lame" and noms(c[L]) == "Virgile Marteau,Léo Lame", noms(c[V]) .. " / " .. noms(c[L]))
 
 print("Compagnie : membres de la Compagnie OK")
+
+-- Les états (Etats.lua) : encodage, réception, dernier état connu, envoi regroupé ; sans l'API du jeu, sous la même garde.
+assert(loadfile("Compagnie/Etats.lua"))("Compagnie", ns)
+local function pareil(a, b)
+  if type(a) ~= "table" or type(b) ~= "table" then return a == b end
+  for k, v in pairs(a) do if not pareil(v, b[k]) then return false end end
+  for k in pairs(b) do if a[k] == nil then return false end end
+  return true
+end
+
+-- Encodage puis décodage d'un état → identique : niveau, quêtes (finie, objectifs dans l'ordre, aucun texte), rendues.
+-- Des questID de Forever au-delà de 90000, une quête sans objectif (« va parler à »), une escorte en 0/1.
+local etat = {
+  niveau = 35,
+  quetes = {
+    [PATTES] = { finie = false, objectifs = { { fait = 5, total = 8 } } },
+    [CHASSE] = { finie = true, objectifs = { { fait = 8, total = 8 }, { fait = 4, total = 4 } } },
+    [659] = { finie = false, objectifs = {} },
+    [95789] = { finie = false, objectifs = { { fait = 0, total = 1 } } },
+  },
+  rendues = { [1453] = true, [97331] = true },
+}
+local corps = ns.encoder(etat)
+assert(type(corps) == "string" and not corps:find("[|\n]"), "un texte simple : " .. tostring(corps))
+assert(pareil(ns.decoder(corps), etat), "encodage puis décodage : identique (" .. corps .. ")")
+assert(ns.encoder(ns.decoder(corps)) == corps, "le même état s'encode toujours pareil (ordre fixe)")
+assert(pareil(ns.decoder(ns.encoder({ niveau = 1, quetes = {}, rendues = {} })), { niveau = 1, quetes = {}, rendues = {} }), "état vide")
+-- Le texte des objectifs n'est jamais envoyé (code de grammaire du jeu « |4… ; ») : seulement les nombres.
+local avecTexte = { niveau = 12, quetes = { [7] = { finie = false, objectifs = {
+  { texte = "Raptor flagellant : 2/10 |4personnage tué:personnages tués;", fait = 2, total = 10 } } } }, rendues = {} }
+assert(not ns.encoder(avecTexte):find("Raptor", 1, true), "le texte n'est pas envoyé")
+assert(ns.decoder(ns.encoder(avecTexte)).quetes[7].objectifs[1].fait == 2, "les nombres le sont")
+
+-- Lecture stricte : un champ mal formé, et tout l'état est rejeté (jamais exécuté ni interprété).
+for _, mauvais in ipairs({ "", "x", "35", "35#", "0##", "35#a:0##", "35#1:2##", "35#1:0:9/8##", "35#1:0:1/2:##",
+  "35#1:0##x", "35##1,,2", "999##", "35#1:0;1:1##", "35#-1:0##", "35#1:0:1/2/3##", "35#1:0##" .. ("1,"):rep(300) .. "1",
+  "35#1:0:" .. ("1/2:"):rep(30) .. "1/2##", "os.exit()", "35#1:0##;os.exit()" }) do
+  assert(ns.decoder(mauvais) == nil, "rejeté : " .. mauvais:sub(1, 40))
+end
+
+-- Un état part en morceaux de messages d'add-on bornés (255 octets) et se recompose chez un membre.
+local V2, L2, Z2 = "Player-1-0000000V", "Player-1-0000000L", "Player-1-0000000Z"
+local gros = { niveau = 40, quetes = {}, rendues = {} }
+for i = 1, 35 do gros.quetes[90000 + i] = { finie = false, objectifs = { { fait = 3, total = 10 }, { fait = 1, total = 12 } } } end
+for i = 1, 60 do gros.rendues[100000 + i] = true end
+local morceaux = ns.morceaux("id-1234567890", ns.encoder(gros), 7)
+assert(#morceaux > 1, "un gros état part en plusieurs messages : " .. #morceaux)
+for _, m in ipairs(morceaux) do assert(#m <= 255, "message de " .. #m .. " octets") end
+
+local function compagnieDe(moi)
+  return { db = { compagnie = { id = "id-1234567890", membres = { { guid = V2, nom = "Virgile Marteau" },
+    { guid = L2, nom = "Léo Lame" } } } }, moi = moi }
+end
+local recus = {}
+local function ioRecu() return { maj = function() recus.maj = (recus.maj or 0) + 1 end,
+  demande = function(de) recus.demande = de end, maintenant = function() return recus.t or 1000 end } end
+local chezV = compagnieDe(V2)
+for _, m in ipairs(morceaux) do ns.recevoirEtat(chezV, L2, m, ioRecu()) end
+assert(pareil(chezV.db.etats[L2], gros), "l'état de Léo est recomposé et gardé comme dernier état connu")
+assert(recus.maj and recus.maj > 0, "le suivi est redessiné")
+
+-- Un message d'un non-membre ne change rien (ni état, ni demande), pas plus qu'un état d'une autre Compagnie.
+chezV = compagnieDe(V2)
+for _, m in ipairs(ns.morceaux("id-1234567890", ns.encoder(etat), 1)) do ns.recevoirEtat(chezV, Z2, m, ioRecu()) end
+for _, m in ipairs(ns.morceaux("autre", ns.encoder(etat), 1)) do ns.recevoirEtat(chezV, L2, m, ioRecu()) end
+recus.demande = nil
+ns.recevoirEtat(chezV, Z2, "D;id-1234567890", ioRecu())
+assert(chezV.db.etats == nil or next(chezV.db.etats) == nil, "non-membre ou autre Compagnie : aucun état gardé")
+assert(recus.demande == nil, "la demande d'un non-membre est ignorée")
+ns.recevoirEtat(chezV, L2, "D;id-1234567890", ioRecu())
+assert(recus.demande == L2, "Léo demande mon état : on y répond")
+-- Sans Compagnie, rien n'est gardé.
+local sans = { db = {}, moi = V2 }
+for _, m in ipairs(ns.morceaux("id-1234567890", ns.encoder(etat), 1)) do ns.recevoirEtat(sans, L2, m, ioRecu()) end
+assert(sans.db.etats == nil, "sans Compagnie : rien")
+-- Morceaux mal formés, incomplets ou mélangés : rien n'est gardé, sans erreur.
+chezV = compagnieDe(V2)
+for _, m in ipairs({ "E", "E;", "E;id-1234567890", "E;id-1234567890;1/1/1", "E;id-1234567890;0/1/1;35##",
+  "E;id-1234567890;1/2/1;35##", "E;id-1234567890;1/1/99;35##", "E;id-1234567890;1/1/1;x##", "D", "D;" }) do
+  ns.recevoirEtat(chezV, L2, m, ioRecu())
+end
+ns.recevoirEtat(chezV, L2, morceaux[1], ioRecu()) -- le début d'un envoi…
+ns.recevoirEtat(chezV, L2, ns.morceaux("id-1234567890", ns.encoder(gros), 8)[2], ioRecu()) -- …et la suite d'un autre
+assert(chezV.db.etats == nil or chezV.db.etats[L2] == nil, "rien de mal formé n'est gardé")
+-- Débit : un membre qui inonde est coupé (au-delà de 60 messages par minute), puis réécouté la minute suivante.
+chezV = compagnieDe(V2)
+recus.t = 5000
+for _ = 1, 61 do ns.recevoirEtat(chezV, L2, "D;id-1234567890", ioRecu()) end
+local un = ns.morceaux("id-1234567890", ns.encoder(etat), 3)
+ns.recevoirEtat(chezV, L2, un[1], ioRecu())
+assert(chezV.db.etats == nil or chezV.db.etats[L2] == nil, "au-delà du débit : ignoré")
+recus.t = 5061
+ns.recevoirEtat(chezV, L2, un[1], ioRecu())
+assert(pareil(chezV.db.etats[L2], etat), "la minute suivante : écouté")
+recus.t = nil
+
+-- Le dernier état connu compte pour un absent : les membres du calcul, dans l'ordre de la Compagnie, moi en direct ;
+-- un membre jamais entendu compte sans quête (jamais à rendre sans lui) ; l'état d'un ancien membre est oublié.
+chezV.db.etats[Z2] = etat -- Zoé n'est plus membre
+local liste = ns.membresDuCalcul(chezV.db, V2, { niveau = 10, quetes = { [PATTES] = pattes(8) }, rendues = {} }, {})
+assert(#liste == 2 and liste[1].nom == V2 and liste[2].nom == L2, "moi puis Léo")
+assert(liste[2].absent and not liste[1].absent, "Léo absent")
+assert(liste[2].quetes[PATTES].objectifs[1].fait == 5, "Léo compte avec son dernier état connu")
+assert(chezV.db.etats[Z2] == nil, "l'état d'un ancien membre est oublié")
+c = ns.calculer(liste)
+assert(c.quetes[PATTES].objectifs[1].fait == 5 and c.quetes[PATTES].enAttente[1] == L2, "5/8, en attente de Léo")
+assert(c.quetes[PATTES].objectifs[1].texte == "Patte de loup", "le texte vient de mon journal, pas du message")
+chezV.db.etats[L2] = nil
+liste = ns.membresDuCalcul(chezV.db, V2, { niveau = 10, quetes = { [PATTES] = pattes(8) }, rendues = {} }, {})
+c = ns.calculer(liste)
+assert(c.niveau == 10, "un membre jamais entendu n'a pas de niveau : celui des autres")
+assert(c.quetes[PATTES].aRendre == false and c.quetes[PATTES].objectifs[1].fait == 0, "jamais entendu : 0/8, pas à rendre")
+local sansC = { etats = { [L2] = etat } }
+assert(#ns.membresDuCalcul(sansC, V2, etat, {}) == 0 and sansC.etats == nil, "plus de Compagnie : les états sont oubliés")
+
+-- Quand un membre est dans le groupe, IsUnitOnQuest corrige son état : une quête qu'il n'a plus est retirée, une quête
+-- qu'il a prise sans qu'on le sache compte à 0 ; une réponse inconnue (nil) ne change rien. Son état gardé n'est pas touché.
+local garde = { niveau = 10, quetes = { [PATTES] = pattes(8), [CHASSE] = chasse(1, 1) }, rendues = {} }
+local SUR = { [PATTES] = false, [CHASSE] = nil, [1003] = true, [1004] = false }
+local corrige = ns.corriger(garde, { PATTES, CHASSE, 1003, 1004 }, function(id) return SUR[id] end)
+assert(corrige.quetes[PATTES] == nil, "il n'a plus la quête : retirée")
+assert(corrige.quetes[CHASSE] == garde.quetes[CHASSE], "réponse inconnue : inchangée")
+assert(corrige.quetes[1003] and #corrige.quetes[1003].objectifs == 0 and not corrige.quetes[1003].finie, "prise : à 0")
+assert(corrige.quetes[1004] == nil, "pas sur la quête, pas dans l'état : rien")
+assert(garde.quetes[PATTES] and garde.quetes[1003] == nil, "l'état gardé n'est pas touché")
+
+-- Les envois d'une rafale d'événements sont regroupés en un seul message ; un état inchangé ne repart pas, sauf en
+-- réponse à une demande.
+local e2, programmes, partis = { db = compagnieDe(V2).db }, {}, {}
+local monEtat = { niveau = 10, quetes = { [PATTES] = pattes(3) }, rendues = {} }
+local ioEnvoi = {
+  programmer = function(delai, fn) programmes[#programmes + 1] = { delai = delai, fn = fn } end,
+  monEtat = function() return monEtat end,
+  envoyerEtat = function(texte) partis[#partis + 1] = texte end,
+}
+for _ = 1, 20 do ns.signaler(e2, false, ioEnvoi) end -- vingt QUEST_LOG_UPDATE d'affilée
+assert(#programmes == 1 and programmes[1].delai > 0, "un seul envoi programmé pour la rafale")
+monEtat = { niveau = 10, quetes = { [PATTES] = pattes(4) }, rendues = {} } -- l'état lu au moment de l'envoi
+table.remove(programmes, 1).fn()
+assert(#partis == 1, "un seul message : " .. #partis)
+local recu1 = partis[1]:match("^E;[^;]+;%d+/%d+/%d+;(.*)$")
+assert(recu1 and ns.decoder(recu1).quetes[PATTES].objectifs[1].fait == 4, "il porte l'état lu à l'envoi : " .. partis[1])
+ns.signaler(e2, false, ioEnvoi)
+table.remove(programmes, 1).fn()
+assert(#partis == 1, "état inchangé : rien ne repart")
+ns.signaler(e2, true, ioEnvoi) -- une demande d'état
+ns.signaler(e2, false, ioEnvoi)
+assert(#programmes == 1, "toujours un seul envoi programmé")
+table.remove(programmes, 1).fn()
+assert(#partis == 2, "en réponse à une demande : il repart")
+-- Sans Compagnie, rien ne part.
+local e3 = { db = {} }
+ns.signaler(e3, true, ioEnvoi)
+table.remove(programmes, 1).fn()
+assert(#partis == 2, "sans Compagnie : rien")
+
+print("Compagnie : états de la Compagnie OK")
