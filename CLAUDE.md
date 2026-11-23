@@ -1,6 +1,6 @@
 # Compagnie
 
-Add-on de quêtes en groupe : une Compagnie fait toute l'aventure ensemble, l'add-on garde les journaux de quêtes alignés. Repo `azeroth-commune/Compagnie` (privé pour l'instant). Espace de travail parent : `../` (outils, recherche, captures — pas dans ce repo).
+Add-on de quêtes en groupe : une Compagnie fait toute l'aventure ensemble, l'add-on garde les journaux de quêtes alignés. Repo `azeroth-commune/Compagnie` (public depuis le 23/11, publié sur CurseForge). Espace de travail parent : `../` (outils, recherche, captures — pas dans ce repo).
 Déploiement : lien symbolique depuis le dossier AddOns du jeu, `/reload` suffit. Requiert le socle Azeroth Commune (ADR 0002).
 Vérifier : `luajit Compagnie/check.lua` depuis le dossier des add-ons (calcul, membres et états, purs : aucune API du jeu),
 puis `tools/sim.sh test Compagnie` dans l'atelier (`tests/`, jamais dans la TOC).
