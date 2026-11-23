@@ -42,6 +42,10 @@ Compatible avec Questie s'il est installé.
 | `/compagnie suivi` | allume ou éteint le mode Compagnie (le suivi du jeu revient quand il est éteint) |
 | `/compagnie quitter` | quitte la Compagnie |
 
+## Soutenir
+
+Ça te plaît ? Tu peux m'offrir un café sur [Ko-fi](https://ko-fi.com/virgile86017). ☕
+
 ## Un souci ?
 
 Ouvre une [issue](https://github.com/azeroth-commune/Compagnie/issues) : ce que tu as fait, ce que tu attendais, ce qui
