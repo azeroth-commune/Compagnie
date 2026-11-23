@@ -8,6 +8,7 @@
 ## Dependencies: AzerothCommune
 ## OptionalDeps: Questie
 ## SavedVariablesPerCharacter: CompagnieDB
+## X-Curse-Project-ID: 1826106
 Calcul.lua
 Membres.lua
 Etats.lua

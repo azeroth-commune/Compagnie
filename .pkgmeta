@@ -1,0 +1,11 @@
+package-as: Compagnie
+ignore:
+  - tests
+  - check.lua
+  - docs
+  - CLAUDE.md
+  - CONTEXT.md
+required-dependencies:
+  - azeroth-commune
+optional-dependencies:
+  - questie
