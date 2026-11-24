@@ -1,15 +1,17 @@
 # Compagnie
 
-**Une équipe fixe de 2 à 5 personnages qui font toute l'aventure ensemble, du niveau 1 à la fin.** Add-on pour
+**Une équipe fixe de 2 à 5 personnages qui font l'aventure ensemble, à partir du niveau où ils se retrouvent.** Add-on pour
 WoW Forever, en bêta, interface en français.
 
-*English: a fixed party of 2 to 5 characters questing together from level 1. Compagnie mode replaces the quest tracker
+*English: a fixed party of 2 to 5 characters questing together from the moment they meet, at any level. Compagnie mode replaces the quest tracker
 with the shared progress: a quest is ready to turn in only when everyone is done. French UI for now.*
 
 ## Ce que ça fait
 
 - **Fonder une Compagnie** en un clic depuis ton groupe du jeu : chaque membre accepte ou refuse. Un personnage n'est
-  membre que d'une Compagnie ; il n'y a pas de chef.
+  membre que d'une Compagnie ; il n'y a pas de chef. À n'importe quel niveau, races différentes comprises : ce que
+  chacun a dans son journal en entrant devient ses **quêtes d'avant**, montrées à part avec son nom, sans faire
+  attendre personne.
 - **Les add-ons des membres s'échangent leur journal de quêtes**, et chacun garde le dernier état connu des autres.
 - **Le mode Compagnie** remplace le suivi des quêtes du jeu par l'**avancement commun** : celui du membre le moins avancé,
   absents compris. Une quête n'est **à rendre** que quand tout le monde a fini.
@@ -17,9 +19,13 @@ with the shared progress: a quest is ready to turn in only when everyone is done
   > Tu as 8/8 pattes de loup, Léo 5/8 et il n'est pas là ce soir : le suivi affiche 5/8. La quête attend Léo.
 
 - **Le suivi par zone** : les quêtes de la zone où tu es, ou d'une zone choisie (clic sur le titre « Quêtes »).
-- **La liste À faire** : « Partager » une quête que tu as et qu'un membre n'a pas ; « Abandonner aussi » une quête
-  qu'un membre a abandonnée (abandonner, c'est dire « la Compagnie ne fait pas celle-là »). Un bouton chacun : l'add-on
-  n'abandonne jamais rien tout seul. Mode Compagnie éteint, une petite liste À faire reste à l'écran.
+- **La liste À faire** : « Partager » une quête que tu as et qu'un membre n'a pas (plusieurs : un seul bouton, chaque
+  clic partage la suivante) ; « Abandonner aussi » une quête
+  que la Compagnie a écartée. Un bouton chacun : l'add-on n'abandonne jamais rien tout seul. Mode Compagnie éteint, une
+  petite liste À faire reste à l'écran.
+- **Écarter une quête** (« la Compagnie ne fait pas celle-là ») : clic droit sur elle dans le suivi ou la liste À faire ;
+  abandonner une quête dans le jeu l'écarte aussi, la reprendre la remet. Elle sort du suivi de tous, le chat dit qui l'a
+  écartée ; l'onglet **Écartées** de la fenêtre de la Compagnie la remet.
 - **Rendre trop tôt ?** Quand tu vas rendre une quête que la Compagnie n'a pas finie, un bandeau sous la fenêtre du jeu
   le dit (« La Compagnie n'a pas fini : 5/8 ») ; le bouton du jeu reste tel quel, tu peux rendre quand même. Les autres
   voient alors « Rendue en avance » dans leur liste À faire, jusqu'à ce qu'ils l'aient finie.

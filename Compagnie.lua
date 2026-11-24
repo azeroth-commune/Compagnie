@@ -38,7 +38,7 @@ local function groupe()
   return t
 end
 
-local dessiner
+local dessiner, monEtat -- plus bas
 local jeu = {
   envoyer = function(texte)
     if IsInGroup() then C_ChatInfo.SendAddonMessage(PREFIXE, texte, IsInRaid() and "RAID" or "PARTY") end
@@ -46,6 +46,13 @@ local jeu = {
   dire = function(texte) print("|cffa78ffcCompagnie :|r " .. texte) end,
   proposer = function(p) StaticPopup_Show(p.deja and "COMPAGNIE_DEJA" or "COMPAGNIE_PROPOSITION", p.nom) end,
   maj = function() ns.majCompagnie() end, -- la Compagnie a changé (fondée, quittée, un membre retiré)
+  -- J'entre dans la Compagnie (#20) : ce qui est dans mon journal devient mes quêtes d'avant ; seules les remises vues
+  -- à partir d'ici comptent pour une quête en avance (CompagnieDB.renduesVues, noté à QUEST_TURNED_IN).
+  entrer = function()
+    local avant = {}
+    for id in pairs(monEtat().quetes) do avant[id] = true end
+    e.db.avant, e.db.renduesVues = avant, {}
+  end,
 }
 
 StaticPopupDialogs.COMPAGNIE_PROPOSITION = {
@@ -120,7 +127,8 @@ local function entier(v, max) return math.min(max, math.max(0, math.floor(tonumb
 
 -- La zone d'une quête (#13) : l'en-tête sous lequel le journal la range (en Classic, un nom de zone ; à vérifier en jeu
 -- contre GetRealZoneText).
-local function monEtat()
+function monEtat()
+  ns.purger(e.db, GetServerTime()) -- les vieilles remises ne partent plus (Etats.lua)
   local quetes, rendues, zone = {}, {}, nil
   for i = 1, 200 do
     local info = C_QuestLog.GetInfo(i)
@@ -141,15 +149,19 @@ local function monEtat()
       titres[id] = info.title
     end
   end
-  -- Rendues et abandonnées : parmi les quêtes des autres membres, celles que j'ai déjà rendues ou abandonnées (pas tout
-  -- l'historique : il ne tient pas dans un message).
-  local abandonnees, mesAbandons = {}, e.db.abandonnees or {}
+  -- Rendues : parmi les quêtes des autres membres, celles que j'ai déjà rendues (pas tout l'historique : il ne tient
+  -- pas dans un message). Une remise que l'add-on n'a pas vue depuis mon entrée (#20) est d'avant : elle ne fait pas de
+  -- quête en avance.
+  local renduesAvant, vues = {}, e.db.renduesVues or {}
   for _, etat in pairs(e.db.etats or {}) do
     for id in pairs(etat.quetes or {}) do
-      if not quetes[id] and C_QuestLog.IsQuestFlaggedCompleted(id) then rendues[id] = true end
-      if mesAbandons[id] then abandonnees[id] = true end
+      if not quetes[id] and C_QuestLog.IsQuestFlaggedCompleted(id) then
+        if vues[id] then rendues[id] = true else renduesAvant[id] = true end
+      end
     end
   end
+  local avant = {}
+  for id in pairs(e.db.avant or {}) do if quetes[id] then avant[id] = true end end
   -- Le foyer (#9) : l'auberge liée (GetBindLocation) ; l'heure de la liaison seulement si je l'ai vue se faire
   -- (HEARTHSTONE_BOUND, CompagnieDB.foyer), sinon inconnue ; l'heure serveur où ma pierre de foyer sera prête
   -- (C_Container.GetItemCooldown : en secondes de GetTime, converties), arrondie à la minute pour que l'état ne change
@@ -157,7 +169,8 @@ local function monEtat()
   local auberge, f = GetBindLocation(), e.db.foyer
   local debut, recharge = C_Container.GetItemCooldown(PIERRE)
   local reste = (debut or 0) > 0 and (recharge or 0) > 1.5 and debut + recharge - GetTime() or 0 -- 1.5 s : temps global
-  return { niveau = UnitLevel("player"), quetes = quetes, rendues = rendues, abandonnees = abandonnees,
+  return { niveau = UnitLevel("player"), quetes = quetes, rendues = rendues, renduesAvant = renduesAvant, avant = avant,
+    ecartees = e.db.ecartees, -- les décisions de la Compagnie (#21), telles que je les connais
     auberge = auberge ~= "" and auberge or nil, liaison = f and f.auberge == auberge and f.date or nil,
     finRecharge = reste > 0 and math.ceil((GetServerTime() + reste) / 60) * 60 or nil }
 end
@@ -204,17 +217,23 @@ local function diffuser(texte, tous)
   return ok
 end
 
-local redessiner -- plus bas
+local redessiner, annoncer -- plus bas
 local envoi = {
   programmer = function(delai, fn) C_Timer.After(delai, fn) end,
   monEtat = monEtat,
   envoyerEtat = function(texte) return diffuser(texte) end,
+  trop = function()
+    jeu.dire("Ton état ne tient plus dans un envoi (journal plein, beaucoup de quêtes écartées) : les autres membres " ..
+      "ne le reçoivent plus. Rends ou abandonne quelques quêtes.")
+  end,
 }
 local reception = {
-  -- Un état reçu : mes rendues et abandonnées suivent les quêtes des autres, mon état repart s'il a changé.
+  -- Un état reçu : mes rendues suivent les quêtes des autres, mon état repart s'il a changé.
   maj = function() redessiner(); ns.signaler(e, false, envoi) end,
+  annoncer = function(changees) annoncer(changees) end,
   demande = function() ns.signaler(e, true, envoi) end,
   maintenant = GetTime,
+  heure = GetServerTime,
 }
 
 -- Le serveur répond « Aucun joueur nommé … » à un chuchotement vers un absent : caché du chat, le membre est noté hors
@@ -300,13 +319,54 @@ local function calculer()
       end)
     end
   end
-  return ns.calculer(liste, GetServerTime()), presents, unites
+  return ns.calculer(liste, GetServerTime(), e.db.ecartees), presents, unites
 end
 local function titre(id) return titres[id] or C_QuestLog.GetTitleForQuestID(id) or ("Quête " .. id) end
 
--- Le texte des quêtes de la Compagnie.
-local function texteSuivi(calc, presents)
-  local ordre, lignes = {}, {}
+-- Les quêtes écartées (#21) : « la Compagnie ne fait pas celle-là », décidé par n'importe quel membre (« Écarter », ou
+-- abandonner dans le jeu) ; « Remettre » l'annule. La décision, datée, part avec mon état ; la plus récente l'emporte
+-- (Etats.lua) et le chat dit qui a écarté ou remis quoi.
+local function phrase(qui, d, id)
+  return ("%s %s « %s »%s."):format(qui, d.ecartee and "écarté" or "remis", titre(id),
+    d.ecartee and " pour la Compagnie" or " dans la Compagnie")
+end
+local function decider(id, ecartee)
+  ns.decider(e.db, id, ecartee, prenom(moi()), math.floor(GetServerTime())) -- un entier : le format refuse le reste
+  jeu.dire(phrase("Tu as", { ecartee = ecartee }, id))
+  ns.signaler(e, false, envoi)
+  redessiner()
+end
+function annoncer(changees)
+  for _, d in ipairs(changees) do jeu.dire(phrase(d.par .. " a", d, d.quete)) end
+end
+StaticPopupDialogs.COMPAGNIE_ECARTER = {
+  text = "Écarter « %s » ? La Compagnie ne la fera pas : elle sort du suivi de tous. « Remettre » dans la fenêtre de la " ..
+    "Compagnie, onglet Écartées.",
+  button1 = "Écarter", button2 = CANCEL or "Annuler",
+  OnAccept = function(_, id) decider(id, true) end,
+  timeout = 0, whileDead = true, hideOnEscape = true,
+}
+local function proposerEcart(id)
+  local p = StaticPopup_Show("COMPAGNIE_ECARTER", titre(id))
+  if p then p.data = id end
+end
+-- Écarter est rare : un clic droit sur une quête (suivi, liste À faire) ouvre un menu, puis la confirmation.
+local function menuEcarter(owner, id)
+  MenuUtil.CreateContextMenu(owner, function(_, root)
+    root:CreateTitle(titre(id))
+    root:CreateButton("Écarter pour la Compagnie", function() proposerEcart(id) end)
+  end)
+end
+local function bulleEcarter(owner)
+  GameTooltip:SetOwner(owner, "ANCHOR_LEFT")
+  GameTooltip:SetText("Clic droit : écarter pour la Compagnie", 1, 1, 1, true)
+  GameTooltip:Show()
+end
+
+-- Les blocs du suivi, un par quête (titre, objectifs, état) : { texte, quete = id d'une quête de la Compagnie (le clic
+-- droit propose de l'écarter) } ; l'en-tête « À part », les quêtes à part et le message sans quête : sans quete.
+local function blocsSuivi(calc, presents)
+  local ordre, blocs = {}, {}
   local voir = zoneAffichee()
   comptes = { [true] = 0 }
   for id, q in pairs(calc.quetes) do
@@ -320,7 +380,7 @@ local function texteSuivi(calc, presents)
   table.sort(ordre, function(a, b) return titre(a) < titre(b) end)
   for _, id in ipairs(ordre) do
     local q = calc.quetes[id]
-    lignes[#lignes + 1] = "|cffffd100" .. titre(id) .. "|r"
+    local lignes = { "|cffffd100" .. titre(id) .. "|r" }
     for i, o in ipairs(q.objectifs) do lignes[#lignes + 1] = ligneObjectif(i, o) end
     local attente = {}
     for _, guid in ipairs(q.enAttente) do
@@ -328,15 +388,32 @@ local function texteSuivi(calc, presents)
     end
     if q.aRendre then lignes[#lignes + 1] = "  |cff59cc73À rendre|r"
     elseif #attente > 0 then lignes[#lignes + 1] = "  |cff999999En attente de " .. table.concat(attente, ", ") .. "|r" end
+    blocs[#blocs + 1] = { texte = table.concat(lignes, "\n"), quete = id }
   end
-  if #lignes > 0 then return table.concat(lignes, "\n") end
-  return voir and "|cff999999Aucune quête de la Compagnie dans cette zone.|r" or "|cff999999Aucune quête en cours.|r"
+  -- Les quêtes à part (#20 : quêtes d'avant ; #21 : écartée gardée), sous les quêtes de la Compagnie : nommées, avec
+  -- l'avancement de qui l'a ; À rendre quand il l'a finie, sans attendre personne.
+  local entete = false
+  for _, a in ipairs(calc.aPart) do
+    if not voir or a.zone == voir then
+      if not entete then blocs[#blocs + 1], entete = { texte = (#blocs > 0 and "\n" or "") .. "|cff999999À part|r" }, true end
+      local lignes = { "|cffc0c0c0" .. titre(a.quete) .. " (" .. prenom(a.membre) .. (a.ecartee and ", écartée" or "") .. ")|r" }
+      for i, o in ipairs(a.objectifs) do lignes[#lignes + 1] = ligneObjectif(i, o) end
+      if a.aRendre then lignes[#lignes + 1] = "  |cff59cc73À rendre|r" end
+      blocs[#blocs + 1] = { texte = table.concat(lignes, "\n") }
+    end
+  end
+  if #blocs == 0 then
+    blocs[1] = { texte = voir and "|cff999999Aucune quête de la Compagnie dans cette zone.|r" or "|cff999999Aucune quête en cours.|r" }
+  end
+  return blocs
 end
 
 -- La liste À faire : mes écarts (ceux où c'est moi qui agis), un bouton chacun ; son libellé dit l'action et son état.
 -- Partager : actif quand un membre qui n'a pas la quête est dans mon groupe du jeu (le jeu ne partage qu'au groupe).
--- Abandonner aussi : le clic du joueur, confirmé (les objets de la quête sont détruits), et lui seul abandonne la quête
--- (l'add-on n'abandonne jamais tout seul).
+-- Abandonner aussi (quête écartée, #21) : le clic du joueur, confirmé (les objets de la quête sont détruits), et lui
+-- seul abandonne la quête (l'add-on n'abandonne jamais tout seul) ; s'il la garde, elle est à lui, à part.
+-- Clic droit sur une ligne qui porte une quête pas encore écartée (Partager, Rendue en avance), même inactive : le menu
+-- Écarter (#21).
 -- Rendue en avance (#8) : un membre l'a rendue avant que je l'aie finie ; rien à cliquer (je la finis), sans dire qui.
 -- Foyer différent (#9) : « Lie-toi à l'auberge de … » ; rien à cliquer (on se lie chez l'aubergiste).
 local function abandonner(id)
@@ -352,10 +429,32 @@ StaticPopupDialogs.COMPAGNIE_ABANDON = {
   OnAccept = function(_, id) abandonner(id) end,
   timeout = 0, whileDead = true, hideOnEscape = true,
 }
+-- Mes écarts, ceux où c'est moi qui agis. Les quêtes à partager tiennent dans un seul bouton (#22), à la place de la
+-- première : { type = "partager", liste = { écart, … } }.
 local function mesEcarts(calc)
-  local t = {}
-  for _, x in ipairs(calc.aFaire) do if x.membre == moi() then t[#t + 1] = x end end
+  local t, partager = {}, nil
+  for _, x in ipairs(calc.aFaire) do
+    if x.membre ~= moi() then -- celui d'un autre
+    elseif x.type ~= "partager" then t[#t + 1] = x
+    elseif partager then table.insert(partager.liste, x)
+    else partager = { type = "partager", liste = { x } }; t[#t + 1] = partager end
+  end
   return t
+end
+-- Partager, la suivante à chaque clic (#22) : le jeu ne partage que dans un clic (OneForAll, bloqué depuis un minuteur
+-- sur Forever). La suivante : la première pas encore partagée de ce tour dont un membre qui ne l'a pas est dans mon
+-- groupe (sinon la première pas encore partagée) ; tout est parti : un nouveau tour. Une quête que les autres ont prise
+-- entre-temps n'est plus dans la liste : sautée. Rend l'écart, combien d'autres restent dans ce tour, et si le partage
+-- peut atteindre quelqu'un (le jeu ne partage qu'au groupe).
+local partagees = {} -- [idQuête] = true : partagée d'un clic pendant ce tour ; rien n'est sauvegardé
+local function suivante(liste, unites)
+  local libres = {}
+  for _, x in ipairs(liste) do if not partagees[x.quete] then libres[#libres + 1] = x end end
+  if #libres == 0 then partagees, libres = {}, liste end
+  for _, x in ipairs(libres) do
+    for _, guid in ipairs(x.manquants) do if unites[guid] then return x, #libres - 1, true end end
+  end
+  return libres[1], #libres - 1, false
 end
 -- Une liste de boutons dans parent (le suivi, ou la petite liste), en haut à y ; rend sa hauteur.
 local function listeAFaire(parent, nom, y)
@@ -377,19 +476,30 @@ local function remplirAFaire(l, ecarts, unites)
       b:SetPoint("TOPLEFT", 0, -(i - 1) * 24)
       b:GetFontString():SetPoint("LEFT", 8, 0)
       b:GetFontString():SetPoint("RIGHT", -8, 0)
+      -- Un bouton inactif n'a ni OnClick ni (par défaut) OnEnter, mais reçoit OnMouseUp : le clic droit passe par là.
+      b:SetMotionScriptsWhileDisabled(true)
+      b:SetScript("OnEnter", function(self) if self.ecartable then bulleEcarter(self) end end)
+      b:SetScript("OnLeave", function() GameTooltip:Hide() end)
+      b:HookScript("OnMouseUp", function(self, bouton)
+        if bouton == "RightButton" and self.ecartable then menuEcarter(self, self.ecartable) end
+      end)
       b:SetScript("OnClick", function(self)
         if self.x.type == "avance" or self.x.type == "foyer" then return end
-        if self.x.type == "abandonnee" then
+        if self.x.type == "ecartee" then
           local p = StaticPopup_Show("COMPAGNIE_ABANDON", titre(self.x.quete))
           if p then p.data = self.x.quete end
           return
         end
-        QuestLogPushQuest(C_QuestLog.GetLogIndexForQuestID(self.x.quete))
+        local index = C_QuestLog.GetLogIndexForQuestID(self.quete)
+        if not index then return end -- plus dans mon journal : rien à partager
+        QuestLogPushQuest(index)
+        partagees[self.quete] = true
+        redessiner() -- le bouton passe à la suivante
       end)
       l.boutons[i] = b
     end
-    b.x = x
-    if x.type == "abandonnee" then
+    b.x, b.ecartable = x, x.type == "avance" and x.quete or nil
+    if x.type == "ecartee" then
       b:SetText("Abandonner aussi : " .. titre(x.quete))
       b:Enable()
     elseif x.type == "avance" then
@@ -400,9 +510,9 @@ local function remplirAFaire(l, ecarts, unites)
       b:SetText("Lie-toi à l'auberge " .. (voyelle and "d'" or "de ") .. x.auberge)
       b:Disable()
     else
-      local auGroupe = false
-      for _, guid in ipairs(x.manquants) do auGroupe = auGroupe or unites[guid] ~= nil end
-      b:SetText((auGroupe and "Partager : " or "Partager en groupe : ") .. titre(x.quete))
+      local q, reste, auGroupe = suivante(x.liste, unites)
+      b.quete, b.ecartable = q.quete, q.quete
+      b:SetText((auGroupe and "Partager : " or "Partager en groupe : ") .. titre(q.quete) .. (reste > 0 and " (+" .. reste .. ")" or ""))
       b:SetEnabled(auGroupe)
     end
     b:Show()
@@ -441,16 +551,52 @@ local function duree(s)
   return m < 60 and m .. " min" or ("%d h %02d"):format(math.floor(m / 60), m % 60)
 end
 
+-- Les lignes du suivi (CompagnieSuiviLigne1…), une par bloc, empilées dans le contenu qui défile ; rend leur hauteur.
+-- Clic droit sur une quête de la Compagnie : le menu Écarter. La molette passe au cadre qui défile ; le glisser déplace
+-- le suivi, comme sur le reste de la fenêtre.
+local lignesSuivi = {}
+local function placerLignes(blocs)
+  local f, y = CompagnieSuiviFrame, 0
+  for i, b in ipairs(blocs) do
+    local l = lignesSuivi[i]
+    if not l then
+      l = CreateFrame("Button", "CompagnieSuiviLigne" .. i, CompagnieSuiviContenu)
+      l:SetWidth(244)
+      l.texte = l:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+      l.texte:SetPoint("TOPLEFT")
+      l.texte:SetWidth(244)
+      l.texte:SetJustifyH("LEFT")
+      l:RegisterForClicks("RightButtonUp")
+      l:RegisterForDrag("LeftButton")
+      l:SetScript("OnDragStart", function() f:StartMoving() end)
+      l:SetScript("OnDragStop", function() f:StopMovingOrSizing(); placerPierre() end)
+      l:SetScript("OnClick", function(self) if self.quete then menuEcarter(self, self.quete) end end)
+      l:SetScript("OnEnter", function(self) if self.quete then bulleEcarter(self) end end)
+      l:SetScript("OnLeave", function() GameTooltip:Hide() end)
+      lignesSuivi[i] = l
+    end
+    l.quete = b.quete
+    l.texte:SetText(b.texte)
+    local h = math.max(1, l.texte:GetStringHeight())
+    l:SetHeight(h)
+    l:ClearAllPoints()
+    l:SetPoint("TOPLEFT", 0, -y)
+    l:Show()
+    y = y + h
+  end
+  for i = #blocs + 1, #lignesSuivi do lignesSuivi[i]:Hide() end
+  return y
+end
+
 local function dessinerSuivi(calc, presents, unites)
   local f = CompagnieSuiviFrame
   if not (f and f:IsShown() and e.db.compagnie) then return end
   if not calc then calc, presents, unites = calculer() end
   local hAFaire = remplirAFaire(CompagnieSuiviAFaire, mesEcarts(calc), unites)
-  CompagnieSuiviQuetes:SetText(texteSuivi(calc, presents))
+  local h = placerLignes(blocsSuivi(calc, presents))
   CompagnieSuiviZone:SetText(libelleZone())
   CompagnieSuiviZone:SetWidth(CompagnieSuiviZone:GetFontString():GetStringWidth() + 22)
-  local h = CompagnieSuiviQuetes:GetStringHeight()
-  CompagnieSuiviQuetes:GetParent():SetHeight(math.max(1, h))
+  CompagnieSuiviContenu:SetHeight(math.max(1, h))
   f:SetHeight(math.min(134 + hAFaire + h, UIParent:GetHeight() * 0.6))
   placerPierre()
   if CompagniePierre then CompagniePierre:SetText(calc.pierre > 0 and "Foyer dans " .. duree(calc.pierre) or "Rentrer au foyer") end
@@ -461,7 +607,11 @@ end
 local fermeeSur
 local function signature(ecarts)
   local t = {}
-  for i, x in ipairs(ecarts) do t[i] = x.type .. (x.quete or x.auberge) end
+  for i, x in ipairs(ecarts) do
+    local ids = {}
+    for k, p in ipairs(x.liste or {}) do ids[k] = p.quete end
+    t[i] = x.type .. (x.quete or x.auberge or table.concat(ids, "+"))
+  end
   return table.concat(t, ",")
 end
 local function dessinerPetiteListe()
@@ -605,13 +755,9 @@ local function ouvrirSuivi()
     local defil = CreateFrame("ScrollFrame", "CompagnieSuiviDefil", f, "UIPanelScrollFrameTemplate")
     defil:SetPoint("TOPLEFT", z, "BOTTOMLEFT", 0, -4)
     defil:SetPoint("BOTTOMRIGHT", -32, 12)
-    local contenu = CreateFrame("Frame", nil, defil)
+    local contenu = CreateFrame("Frame", "CompagnieSuiviContenu", defil)
     contenu:SetSize(244, 1)
     defil:SetScrollChild(contenu)
-    local q = contenu:CreateFontString("CompagnieSuiviQuetes", "OVERLAY", "GameFontHighlightSmall")
-    q:SetPoint("TOPLEFT")
-    q:SetWidth(244)
-    q:SetJustifyH("LEFT")
     -- Fermée par sa croix (pas quand l'interface entière est cachée, Alt-Z : elle reste « montrée ») : mode éteint.
     f:HookScript("OnShow", placerPierre)
     f:HookScript("OnDragStop", placerPierre)
@@ -700,15 +846,20 @@ local function basculerMode()
 end
 
 ---------------------------------------------------------------------------------------------------
--- La fenêtre : la liste des membres, présent ou absent, « Retirer » sur les autres ; « Fonder » ou « Quitter » ; le mode
--- Compagnie, son état sur son bouton.
-local tableau, vide, boutonFonder, boutonQuitter, boutonMode
+-- La fenêtre, en deux onglets : Membres (présent ou absent, « Retirer » sur les autres ; « Fonder » ou « Quitter ») et
+-- Écartées (#21 : les quêtes écartées, qui l'a décidé, « Remettre ») ; le mode Compagnie, son état sur son bouton.
+local tableau, vide, boutonFonder, boutonQuitter, boutonMode, tableauEcartees, videEcartees, panneaux
 local COLONNES = {
   { key = "nom", title = "Membre", w = 180, get = function(m) return m.nom end },
   { key = "presence", title = "Présence", w = 80, get = function(m) return m.presence end,
     fmt = function(v) return (v == "présent" and "|cff59cc73" or "|cff999999") .. v .. "|r" end },
   { key = "retirer", w = 80, button = function(m) if m.guid ~= moi() then return "Retirer" end end,
     click = function(m) ns.retirer(e, moi(), m.guid, jeu) end },
+}
+local COLONNES_ECARTEES = {
+  { key = "titre", title = "Quête écartée", w = 180, get = function(l) return l.titre end },
+  { key = "par", title = "Par", w = 80, get = function(l) return l.par end },
+  { key = "remettre", w = 80, button = function() return "Remettre" end, click = function(l) decider(l.quete, false) end },
 }
 
 function dessiner()
@@ -723,6 +874,18 @@ function dessiner()
   boutonQuitter:SetShown(c ~= nil)
   boutonMode:SetShown(c ~= nil)
   boutonMode:SetText("Mode Compagnie : " .. (modeActif() and "oui" or "non"))
+  local ecartees = {}
+  for id, d in pairs(e.db.ecartees or {}) do
+    if d.ecartee then ecartees[#ecartees + 1] = { quete = id, titre = titre(id), par = d.par } end
+  end
+  table.sort(ecartees, function(a, b) return a.titre < b.titre end)
+  tableauEcartees:SetData(ecartees)
+  videEcartees:SetShown(#ecartees == 0)
+end
+
+local function onglet(i)
+  for k, p in ipairs(panneaux) do p:SetShown(k == i) end
+  PanelTemplates_SetTab(CompagnieFrame, i)
 end
 
 local function bouton(f, texte, fn, largeur, nom)
@@ -737,20 +900,40 @@ end
 local function ouvrir()
   if not CompagnieFrame then
     local f = AC.Fenetre("CompagnieFrame", "Compagnie", 400, 230)
+    panneaux = {}
+    for i = 1, 2 do panneaux[i] = CreateFrame("Frame", nil, f); panneaux[i]:SetAllPoints() end
     local largeur
-    tableau, largeur = AC.Tableau(f, COLONNES, { name = "membres", bottom = 44 })
+    tableau, largeur = AC.Tableau(panneaux[1], COLONNES, { name = "membres", bottom = 44 })
     f:SetWidth(largeur + 50)
-    vide = f:CreateFontString("CompagnieVide", "OVERLAY", "GameFontHighlight")
+    vide = panneaux[1]:CreateFontString("CompagnieVide", "OVERLAY", "GameFontHighlight")
     vide:SetPoint("TOPLEFT", 14, -70)
     vide:SetWidth(largeur)
     vide:SetJustifyH("LEFT")
     vide:SetText("Pas de Compagnie. Dans un groupe du jeu, « Fonder » la propose à chaque personnage du groupe ; " ..
       "elle a de 2 à 5 membres.")
-    boutonFonder = bouton(f, "Fonder", fonder)
-    boutonQuitter = bouton(f, "Quitter", function() ns.quitter(e, jeu) end)
+    boutonFonder = bouton(panneaux[1], "Fonder", fonder)
+    boutonQuitter = bouton(panneaux[1], "Quitter", function() ns.quitter(e, jeu) end)
     boutonMode = bouton(f, "Mode Compagnie", basculerMode, 170, "CompagnieModeBouton")
     boutonMode:ClearAllPoints()
     boutonMode:SetPoint("BOTTOMRIGHT", -14, 12)
+    tableauEcartees = AC.Tableau(panneaux[2], COLONNES_ECARTEES, { name = "ecartees", bottom = 44 })
+    videEcartees = panneaux[2]:CreateFontString("CompagnieEcarteesVide", "OVERLAY", "GameFontHighlight")
+    videEcartees:SetPoint("TOPLEFT", 14, -70)
+    videEcartees:SetWidth(largeur)
+    videEcartees:SetJustifyH("LEFT")
+    videEcartees:SetText("Aucune quête écartée. Pour écarter une quête : clic droit sur elle dans le suivi ou la liste " ..
+      "À faire.")
+    f.Tabs = {}
+    for i, nom in ipairs({ "Membres", "Écartées" }) do
+      local t = CreateFrame("Button", "CompagnieFrameTab" .. i, f, "PanelTabButtonTemplate")
+      t:SetID(i)
+      t:SetText(nom)
+      t:SetScript("OnClick", function() onglet(i) end)
+      f.Tabs[i] = t
+    end
+    f.Tabs[1]:SetPoint("TOPLEFT", f, "BOTTOMLEFT", 10, 2)
+    PanelTemplates_SetNumTabs(f, 2)
+    onglet(1)
   end
   CompagnieFrame:Show()
   dessiner()
@@ -772,7 +955,9 @@ end
 
 -- La Compagnie a changé : le mode suit, et mon état part (forcé : de nouveaux membres ne l'ont pas).
 function ns.majCompagnie()
-  if not e.db.compagnie then e.db.etats, e.db.abandonnees = nil, nil end -- plus de Compagnie : derniers états et abandons oubliés
+  if not e.db.compagnie then -- plus de Compagnie : derniers états, écartées, quêtes d'avant et remises vues oubliés
+    e.db.etats, e.db.ecartees, e.db.avant, e.db.renduesVues = nil, nil, nil, nil
+  end
   appliquerMode()
   redessiner()
   ns.signaler(e, true, envoi)
@@ -807,9 +992,9 @@ local function veiller()
   C_Timer.After(VEILLE, veiller)
 end
 
--- Mes abandons (#5) : une quête que j'abandonne (par le journal du jeu, ou « Abandonner aussi ») est notée dans
--- CompagnieDB.abandonnees : abandonner, c'est dire « la Compagnie ne fait pas celle-là ». Noté au clic du joueur (le jeu
--- appelle C_QuestLog.SetAbandonQuest puis AbandonQuest), rien n'est deviné ; oublié quand je la reprends (QUEST_ACCEPTED).
+-- Mes abandons (#21) : abandonner une quête dans le jeu l'écarte pour la Compagnie (« la Compagnie ne fait pas
+-- celle-là »). Vu au clic du joueur (le jeu appelle C_QuestLog.SetAbandonQuest puis AbandonQuest), rien n'est deviné.
+-- Déjà écartée (« Abandonner aussi ») : rien de plus ; ma quête d'avant (#20), à moi seul : seulement oubliée.
 -- Accroché une fois, au chargement (ADDON_LOADED).
 local aAbandonner, abandonsAccroches
 local function accrocherAbandons()
@@ -820,10 +1005,13 @@ local function accrocherAbandons()
     local id = aAbandonner
     aAbandonner = nil
     if not (e.db.compagnie and type(id) == "number" and id > 0) then return end
-    e.db.abandonnees = e.db.abandonnees or {}
-    e.db.abandonnees[id] = true
-    ns.signaler(e, false, envoi)
-    redessinerBientot()
+    local d = e.db.ecartees and e.db.ecartees[id]
+    if d and d.ecartee then return end
+    if e.db.avant and e.db.avant[id] and not calculer().quetes[id] then
+      e.db.avant[id] = nil
+      return redessinerBientot()
+    end
+    decider(id, true)
   end)
 end
 
@@ -866,10 +1054,18 @@ cadre:SetScript("OnEvent", function(_, ev, a1, texte, canal, expediteur)
   elseif ev == "QUEST_ACCEPTED" then
     -- Forever : (questID) ; d'autres clients Classic : (index, questID).
     local id = type(texte) == "number" and texte or a1
-    if e.db.abandonnees and id then e.db.abandonnees[id] = nil end
+    if e.db.avant and id then e.db.avant[id] = nil end -- reprise après l'entrée : une quête de la Compagnie
+    -- Reprendre une quête que j'avais écartée, c'est la remettre (#21) : datée et annoncée.
+    local d = id and e.db.compagnie and e.db.ecartees and e.db.ecartees[id]
+    if d and d.ecartee and d.par == prenom(moi()) then decider(id, false) end
   elseif MONJOURNAL[ev] then
     -- Ma liaison (#9) : notée avec l'heure serveur, vue par le jeu (rien n'est deviné d'une liaison faite add-on éteint).
     if ev == "HEARTHSTONE_BOUND" then e.db.foyer = { auberge = GetBindLocation(), date = GetServerTime() } end
+    -- Une remise vue depuis mon entrée (#20) : elle peut faire une quête en avance chez les autres.
+    if ev == "QUEST_TURNED_IN" and e.db.compagnie and type(a1) == "number" then
+      e.db.renduesVues = e.db.renduesVues or {}
+      e.db.renduesVues[a1] = true
+    end
     if e.db.compagnie then ns.signaler(e, false, envoi); redessinerBientot() end
   elseif a1 == PREFIXE and type(texte) == "string" and type(expediteur) == "string" then
     local nom = AC.Destinataire(expediteur)

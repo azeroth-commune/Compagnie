@@ -114,41 +114,42 @@ c = ns.calculer({ { nom = "Virgile", niveau = 5, quetes = { [KOBOLDS] = kobolds(
   { nom = "Léo", niveau = 5, quetes = {}, rendues = { [KOBOLDS] = true } } })
 assert(#c.aFaire == 1 and c.aFaire[1].type == "avance", "déjà rendue par Léo : rien à partager (elle est en avance)")
 
--- Abandon par un membre : « abandonnée » chez chacun des autres qui l'a encore, jamais chez celui qui l'a abandonnée ;
--- une quête abandonnée n'est plus à partager (Mira ne l'a pas : on ne la lui propose pas).
+-- Quête écartée (#21) : « la Compagnie ne fait pas celle-là », décidé par n'importe quel membre (ecartees : les décisions
+-- de la Compagnie, la plus récente par quête). Elle disparaît des écarts et de l'avancement commun chez tous.
+local function ecartee(par, date) return { ecartee = true, date = date or 100, par = par or "Virgile" } end
+local deux = { { nom = "Virgile", niveau = 5, quetes = { [KOBOLDS] = kobolds(true) } }, { nom = "Léo", niveau = 5, quetes = {} } }
+c = ns.calculer(deux, 0, { [KOBOLDS] = ecartee("Léo") })
+assert(c.quetes[KOBOLDS] == nil, "écartée : hors de l'avancement commun")
+x = seul(c.aFaire, "ecartee", "Virgile", KOBOLDS) -- pas à partager à Léo : « Abandonner aussi » chez Virgile, qui l'a
+assert(x.par == "Léo", "écartée par Léo")
+assert(#c.aPart == 1 and c.aPart[1].membre == "Virgile" and c.aPart[1].ecartee, "gardée par Virgile : sa quête, nommée")
+-- Remettre : elle revient (à partager, dans l'avancement commun).
+c = ns.calculer(deux, 0, { [KOBOLDS] = { ecartee = false, date = 200, par = "Virgile" } })
+seul(c.aFaire, "partager", "Virgile", KOBOLDS)
+assert(c.quetes[KOBOLDS] and #c.aPart == 0, "remise : de nouveau une quête de la Compagnie")
+-- Abandon dans le jeu par Virgile (= écartée par lui) : « Abandonner aussi » chez Léo et chez Mira, qui l'ont encore ;
+-- s'ils la gardent, elle compte comme leur quête, nommée, avec leur avancement, hors de l'avancement commun.
 c = ns.calculer({
-  { nom = "Virgile", niveau = 5, quetes = { [KOBOLDS] = kobolds(true) } },
-  { nom = "Léo", niveau = 5, quetes = {}, abandonnees = { [KOBOLDS] = true } },
-  { nom = "Mira", niveau = 5, quetes = {} },
-})
-x = seul(c.aFaire, "abandonnee", "Virgile", KOBOLDS)
-assert(#x.par == 1 and x.par[1] == "Léo", "abandonnée par Léo")
-c = ns.calculer({
-  { nom = "Virgile", niveau = 5, quetes = { [KOBOLDS] = kobolds(true) } },
-  { nom = "Léo", niveau = 5, quetes = {}, abandonnees = { [KOBOLDS] = true } },
-  { nom = "Mira", niveau = 5, quetes = { [KOBOLDS] = kobolds() } },
-})
-assert(#c.aFaire == 2 and c.aFaire[1].membre == "Mira" and c.aFaire[2].membre == "Virgile", "chez Virgile et chez Mira")
--- Virgile abandonne aussi : l'écart de Virgile est résorbé, celui de Mira reste ; quand tous l'ont abandonnée : plus rien.
-c = ns.calculer({
-  { nom = "Virgile", niveau = 5, quetes = {}, abandonnees = { [KOBOLDS] = true } },
-  { nom = "Léo", niveau = 5, quetes = {}, abandonnees = { [KOBOLDS] = true } },
-  { nom = "Mira", niveau = 5, quetes = { [KOBOLDS] = kobolds() } },
-})
-x = seul(c.aFaire, "abandonnee", "Mira", KOBOLDS)
-assert(#x.par == 2, "abandonnée par Virgile et Léo")
-c = ns.calculer({
-  { nom = "Virgile", niveau = 5, quetes = {}, abandonnees = { [KOBOLDS] = true } },
-  { nom = "Léo", niveau = 5, quetes = {}, abandonnees = { [KOBOLDS] = true } },
-  { nom = "Mira", niveau = 5, quetes = {}, abandonnees = { [KOBOLDS] = true } },
-})
-assert(#c.aFaire == 0, "abandonnée par tous : résorbé, n'apparaît plus")
+  { nom = "Virgile", niveau = 5, quetes = {} },
+  { nom = "Léo", niveau = 5, quetes = { [PATTES] = pattes(3) } },
+  { nom = "Mira", niveau = 5, quetes = { [PATTES] = pattes(6) } },
+}, 0, { [PATTES] = ecartee("Virgile") })
+assert(#c.aFaire == 2 and c.aFaire[1].type == "ecartee" and c.aFaire[1].membre == "Léo" and c.aFaire[2].membre == "Mira",
+  "« Abandonner aussi » chez Léo et Mira")
+assert(c.quetes[PATTES] == nil and #c.aPart == 2 and c.aPart[1].membre == "Léo" and c.aPart[1].objectifs[1].fait == 3,
+  "gardée par Léo : nommée, avec son avancement, hors de l'avancement commun")
+-- Plus personne ne l'a : plus rien. Rendue en avance par un membre : rien non plus (écartée).
+c = ns.calculer({ { nom = "Virgile", niveau = 5, quetes = {} }, { nom = "Léo", niveau = 5, quetes = {} } }, 0, { [PATTES] = ecartee() })
+assert(#c.aFaire == 0 and #c.aPart == 0, "écartée par tous : rien")
+c = ns.calculer({ { nom = "Virgile", niveau = 5, quetes = {}, rendues = { [PATTES] = true } },
+  { nom = "Léo", niveau = 5, quetes = { [PATTES] = pattes(5) } } }, 0, { [PATTES] = ecartee() })
+seul(c.aFaire, "ecartee", "Léo", PATTES)
 -- Les écarts de plusieurs quêtes : triés par quête, toujours dans le même ordre.
 c = ns.calculer({
   { nom = "Virgile", niveau = 5, quetes = { [KOBOLDS] = kobolds(true), [PATTES] = { finie = false, objectifs = {}, partageable = true } } },
-  { nom = "Léo", niveau = 5, quetes = {}, abandonnees = { [KOBOLDS] = true } },
-})
-assert(#c.aFaire == 2 and c.aFaire[1].quete == PATTES and c.aFaire[1].type == "partager" and c.aFaire[2].type == "abandonnee",
+  { nom = "Léo", niveau = 5, quetes = {} },
+}, 0, { [KOBOLDS] = ecartee() })
+assert(#c.aFaire == 2 and c.aFaire[1].quete == PATTES and c.aFaire[1].type == "partager" and c.aFaire[2].type == "ecartee",
   "trié par quête")
 
 -- Quête en avance (#8) : rendue par un seul membre, les autres en cours → « en avance » chez chacun des autres qui ne
@@ -217,6 +218,63 @@ c = ns.calculer({ { nom = "Virgile", niveau = 5, quetes = {} },
 assert(c.pierre == 0, "sa recharge est finie depuis : prête")
 assert(ns.calculer({ { nom = "Virgile", niveau = 5, quetes = {} }, { nom = "Léo" } }, 9000).pierre == 0, "jamais entendu : prête")
 
+-- Quêtes d'avant (#20) : fondée en cours d'aventure, chacun arrive avec les restes de sa zone de départ. Elles sont à
+-- part (nommées, avec l'avancement de qui l'a), sans écart, et ne font attendre personne.
+local TELDRASSIL, COMTE = 2002, 2001 -- à part : triées par quête
+c = ns.calculer({
+  { nom = "Virgile", niveau = 12, quetes = { [COMTE] = kobolds(true) }, avant = { [COMTE] = true } },
+  { nom = "Léo", niveau = 13, quetes = { [TELDRASSIL] = pattes(8) }, avant = { [TELDRASSIL] = true } },
+})
+assert(next(c.quetes) == nil, "journaux différents : aucune quête de la Compagnie")
+assert(#c.aFaire == 0, "aucun écart (ni à partager, ni en attente) : " .. #c.aFaire)
+assert(#c.aPart == 2, "deux quêtes à part : " .. #c.aPart)
+local a = c.aPart[2]
+assert(a.quete == TELDRASSIL and a.membre == "Léo" and a.aRendre, "la quête de Léo est à part, À rendre sans attendre Virgile")
+assert(a.objectifs[1].fait == 8, "avec l'avancement de Léo")
+assert(c.aPart[1].quete == COMTE and c.aPart[1].membre == "Virgile" and not c.aPart[1].aRendre, "celle de Virgile")
+-- Une quête d'avant que tous les membres ont (d'avant chez chacun) redevient une quête de la Compagnie (même zone de départ).
+c = ns.calculer({
+  { nom = "Virgile", niveau = 12, quetes = { [COMTE] = pattes(8) }, avant = { [COMTE] = true } },
+  { nom = "Léo", niveau = 12, quetes = { [COMTE] = pattes(3) }, avant = { [COMTE] = true } },
+})
+assert(c.quetes[COMTE] and c.quetes[COMTE].objectifs[1].fait == 3 and #c.aPart == 0, "tous l'ont : commune, 3/8")
+-- Mira (jamais entendue) ne l'a pas : elle reste à part.
+c = ns.calculer({
+  { nom = "Virgile", niveau = 12, quetes = { [COMTE] = pattes(8) }, avant = { [COMTE] = true } },
+  { nom = "Léo", niveau = 12, quetes = { [COMTE] = pattes(3) }, avant = { [COMTE] = true } }, { nom = "Mira" },
+})
+assert(not c.quetes[COMTE] and #c.aPart == 2, "d'avant chez tous ceux qui l'ont, pas tous : à part, chez chacun qui l'a")
+-- Une quête d'avant chez Virgile, que Léo a prise après la fondation : de la Compagnie ; Mira, qui ne l'a pas, la reçoit
+-- par « Partager » de qui peut la partager (Virgile : le jeu ne dit « partageable » que pour mes quêtes).
+c = ns.calculer({
+  { nom = "Virgile", niveau = 12, quetes = { [COMTE] = { finie = false, objectifs = { { fait = 6, total = 8 } }, partageable = true } },
+    avant = { [COMTE] = true } },
+  { nom = "Léo", niveau = 12, quetes = { [COMTE] = pattes(2) } },
+  { nom = "Mira", niveau = 12, quetes = {} },
+})
+assert(c.quetes[COMTE] and #c.aPart == 0, "prise après la fondation par Léo : de la Compagnie")
+assert(c.quetes[COMTE].objectifs[1].fait == 0 and table.concat(c.quetes[COMTE].enAttente, ",") == "Virgile,Léo,Mira",
+  "la quête d'avant de Virgile compte normalement, Mira à 0")
+x = seul(c.aFaire, "partager", "Virgile", COMTE)
+assert(#x.manquants == 1 and x.manquants[1] == "Mira", "Mira reçoit « Partager »")
+-- Une quête en avance ne compte que pour une remise vue après l'entrée : Léo a rendu COMTE avant (renduesAvant), il
+-- ne retient pas la Compagnie et rien n'est en avance ; rendue après (rendues) : en avance.
+c = ns.calculer({
+  { nom = "Virgile", niveau = 12, quetes = { [COMTE] = pattes(8) } },
+  { nom = "Léo", niveau = 12, quetes = {}, renduesAvant = { [COMTE] = true } },
+})
+assert(#c.aFaire == 0, "rendue avant l'entrée : pas en avance")
+assert(c.quetes[COMTE].aRendre, "et Léo ne retient pas la Compagnie")
+c = ns.calculer({
+  { nom = "Virgile", niveau = 12, quetes = { [COMTE] = pattes(5) } },
+  { nom = "Léo", niveau = 12, quetes = {}, rendues = { [COMTE] = true } },
+})
+seul(c.aFaire, "avance", "Virgile", COMTE)
+-- Rendue avant l'entrée : pas à partager à Léo non plus.
+c = ns.calculer({ { nom = "Virgile", niveau = 5, quetes = { [KOBOLDS] = kobolds(true) } },
+  { nom = "Léo", niveau = 5, quetes = {}, renduesAvant = { [KOBOLDS] = true } } })
+assert(#c.aFaire == 0, "déjà faite par Léo avant l'entrée : rien à partager")
+
 print("Compagnie : calcul de la Compagnie OK")
 
 -- Les membres (Membres.lua) : fonder, accepter, refuser, quitter, retirer, sans l'API du jeu, sous la même garde.
@@ -252,6 +310,7 @@ local function client(moi, guids)
     dire = function(texte) cl.dits[#cl.dits + 1] = texte end,
     proposer = function() cl.propositions = cl.propositions + 1 end,
     maj = function() cl.maj = cl.maj + 1 end,
+    entrer = function() cl.entrees = (cl.entrees or 0) + 1 end,
   }
   return cl
 end
@@ -297,6 +356,8 @@ assert(noms(c[L]) == "Virgile Marteau,Léo Lame", "chez Léo : " .. noms(c[L]))
 assert(c[M].e.db.compagnie == nil, "Mira a refusé : pas membre")
 assert(c[V].e.db.compagnie.id == "id1" and c[L].e.db.compagnie.id == "id1", "même Compagnie chez les deux")
 assert(c[L].maj > 0, "la liste de Léo est redessinée")
+-- L'entrée dans la Compagnie (#20) : chacun note ses quêtes d'avant, une fois ; pas Mira, qui a refusé.
+assert(c[V].entrees == 1 and c[L].entrees == 1 and not c[M].entrees, "entrée notée chez le fondateur et chez Léo")
 
 -- Déjà membre : il ne peut pas en fonder une autre, et une proposition reçue le dit (refus envoyé tout seul).
 ok, raison = ns.fonder(c[L].e, L, c[L].groupe, "id2", c[L].io)
@@ -452,14 +513,14 @@ local etat = {
     [95789] = { finie = false, objectifs = { { fait = 0, total = 1 } } },
   },
   rendues = { [1453] = true, [97331] = true },
-  abandonnees = {},
+  ecartees = {}, avant = {}, renduesAvant = {},
 }
 local corps = ns.encoder(etat)
 assert(type(corps) == "string" and not corps:find("[|\n]"), "un texte simple : " .. tostring(corps))
 assert(pareil(ns.decoder(corps), etat), "encodage puis décodage : identique (" .. corps .. ")")
 assert(ns.encoder(ns.decoder(corps)) == corps, "le même état s'encode toujours pareil (ordre fixe)")
 assert(pareil(ns.decoder(ns.encoder({ niveau = 1, quetes = {}, rendues = {} })),
-  { niveau = 1, quetes = {}, rendues = {}, abandonnees = {} }), "état vide")
+  { niveau = 1, quetes = {}, rendues = {}, ecartees = {}, avant = {}, renduesAvant = {} }), "état vide")
 -- Le texte des objectifs n'est jamais envoyé (code de grammaire du jeu « |4… ; ») : seulement les nombres.
 local avecTexte = { niveau = 12, quetes = { [7] = { finie = false, objectifs = {
   { texte = "Raptor flagellant : 2/10 |4personnage tué:personnages tués;", fait = 2, total = 10 } } } }, rendues = {} }
@@ -474,38 +535,132 @@ for _, mauvais in ipairs({ "", "x", "35", "35#", "35##", "35#1:0#", "35#1:0##", 
   "os.exit()", "35#1:0##;os.exit()##", "35#1:0###x", "35#1:0###1,,2", "35#1:0###-1", "35#1:0###0",
   "35#1:0###" .. ("1,"):rep(300) .. "1" }) do
   assert(ns.decoder(mauvais) == nil, "rejeté : " .. mauvais:sub(1, 40))
-  assert(ns.decoder(mauvais .. "###") == nil, "rejeté avec le foyer : " .. mauvais:sub(1, 40))
+  assert(ns.decoder(mauvais .. "#####") == nil, "rejeté avec le foyer et les quêtes d'avant : " .. mauvais:sub(1, 40))
 end
--- Un état à cinq champs (celui de #5, sans foyer) est rejeté (#9).
-assert(ns.decoder("35#1:0####") == nil and ns.decoder("35#1:0######"), "cinq champs : rejeté ; huit : lu")
+-- Un état à cinq champs (celui de #5, sans foyer) est rejeté (#9) ; à huit (celui de #9, sans quêtes d'avant) aussi (#20).
+assert(ns.decoder("35#1:0####") == nil and ns.decoder("35#1:0######") == nil and ns.decoder("35#1:0########"),
+  "cinq et huit champs : rejeté ; dix : lu")
+
+-- Les quêtes d'avant et les quêtes rendues avant l'entrée (#20) partent avec l'état : encodage puis décodage → identique.
+local avecAvant = { niveau = 14, quetes = { [PATTES] = { finie = false, objectifs = {} }, [2002] = { finie = true, objectifs = {} } },
+  avant = { [2002] = true }, rendues = { [1453] = true }, renduesAvant = { [783] = true, [95790] = true }, ecartees = {} }
+corps = ns.encoder(avecAvant)
+assert(corps:find("#2002#783,95790$"), "quêtes d'avant, puis rendues avant l'entrée, triées : " .. corps)
+assert(pareil(ns.decoder(corps), avecAvant), "avec quêtes d'avant : identique (" .. corps .. ")")
+-- Une quête d'avant qui n'est plus dans le journal ne part pas ; reçue, elle fait rejeter l'état.
+assert(ns.encoder({ niveau = 2, quetes = {}, avant = { [9] = true } }) == "2#########", "quête d'avant hors du journal : ne part pas")
+for _, mauvais in ipairs({ "35#1:0#######2#", "35#1:0#######x#", "35#1:0#######1,1#", "35#1:0########0", "35#1:0########1,,2" }) do
+  assert(ns.decoder(mauvais) == nil, "rejeté : " .. mauvais)
+end
 
 -- Les questID sont bornés à 2147483647 (un entier 32 bits signé, comme le jeu).
-assert(ns.decoder("35#2147483647:0#2147483647##2147483647###").quetes[2147483647], "2147483647 : accepté")
-assert(ns.decoder("35#2147483648:0######") == nil and ns.decoder("35##2147483648#####") == nil and
-  ns.decoder("35####2147483648###") == nil, "au-delà : rejeté")
+assert(ns.decoder("35#2147483647:0#2147483647##2147483647:1:2147483647:V####2147483647#2147483647").quetes[2147483647],
+  "2147483647 : accepté")
+assert(ns.decoder("35#2147483648:0########") == nil and ns.decoder("35##2147483648#######") == nil and
+  ns.decoder("35####2147483648:1:1:V#####") == nil and ns.decoder("35####1:1:2147483648:V#####") == nil and
+  ns.decoder("35#########2147483648") == nil, "au-delà : rejeté")
 
--- Les quêtes abandonnées récemment (#5) partent avec l'état : encodage puis décodage → identique.
-local avecAbandons = { niveau = 12, quetes = { [PATTES] = { finie = false, objectifs = {} } }, rendues = { [1453] = true },
-  abandonnees = { [783] = true, [95790] = true } }
-corps = ns.encoder(avecAbandons)
-assert(corps:find("#783,95790###$"), "abandons triés, puis le foyer (vide) : " .. corps)
-assert(pareil(ns.decoder(corps), avecAbandons), "avec abandons : identique (" .. corps .. ")")
+-- Les quêtes écartées (#21) partent avec l'état, datées, avec qui a décidé, remises comprises : encodage puis décodage
+-- → identique.
+local avecEcartees = { niveau = 12, quetes = { [PATTES] = { finie = false, objectifs = {} } }, rendues = { [1453] = true },
+  ecartees = { [783] = { ecartee = true, date = 1764000000, par = "Léo" }, [95790] = { ecartee = false, date = 1764000100, par = "Virgile" } },
+  avant = {}, renduesAvant = {} }
+corps = ns.encoder(avecEcartees)
+assert(corps:find("#783:1:1764000000:Léo;95790:0:1764000100:Virgile#####$"), "écartées triées, puis le foyer (vide) : " .. corps)
+assert(pareil(ns.decoder(corps), avecEcartees), "avec écartées : identique (" .. corps .. ")")
+-- Mal formées : tout l'état est rejeté (statut 0 ou 1, date entière positive, « par » comme une zone, une quête une fois).
+for _, f in ipairs({ "783", "783:1:1", "783:2:1:Léo", "783:1:0:Léo", "783:1:x:Léo", "783:1:1:", "783:1:1:a|b", "x:1:1:Léo",
+  "783:1:1:Léo;783:0:2:Léo", "783:1:1:Léo;", "783:1:1:Léo:1" }) do
+  assert(ns.decoder("12#####" .. f .. "#####") == nil, "écartée rejetée : " .. f)
+end
+-- Au-delà de 30 décisions, seules les 30 plus récentes partent (l'état reste lisible).
+local beaucoup = { niveau = 5, quetes = {}, ecartees = {} }
+for i = 1, 40 do beaucoup.ecartees[i] = { ecartee = true, date = 1000 + i, par = "Léo" } end
+lu = assert(ns.decoder(ns.encoder(beaucoup)), "40 décisions : lisible")
+local function compter(t) local n = 0 for _ in pairs(t) do n = n + 1 end return n end
+assert(compter(lu.ecartees) == 30 and lu.ecartees[40] and lu.ecartees[11] and not lu.ecartees[10],
+  "les 30 plus récentes : " .. compter(lu.ecartees))
+-- Une remise récente ne pousse pas dehors une écartée plus ancienne : les écartées partent d'abord.
+for i = 1, 30 do beaucoup.ecartees[i] = { ecartee = true, date = 1000 + i, par = "Léo" } end
+for i = 31, 40 do beaucoup.ecartees[i] = nil end
+beaucoup.ecartees[99] = { ecartee = false, date = 5000, par = "Mira" }
+lu = ns.decoder(ns.encoder(beaucoup))
+assert(compter(lu.ecartees) == 30 and lu.ecartees[1] and not lu.ecartees[99], "les 30 écartées partent, pas la remise")
+-- Plus de 30 décisions reçues : l'état est rejeté.
+local trente1 = {}
+for i = 1, 31 do trente1[i] = i .. ":1:1:Léo" end
+assert(ns.decoder("5####" .. table.concat(trente1, ";") .. "#####") == nil, "31 décisions reçues : rejeté")
+-- Une décision datée de plus d'un jour après mon heure serveur fait rejeter l'état (elle l'emporterait pour toujours).
+local futur = "5####783:1:" .. (100000 + 86401) .. ":Léo#####"
+assert(ns.decoder(futur, 100000) == nil and ns.decoder("5####783:1:" .. (100000 + 86400) .. ":Léo#####", 100000),
+  "plus d'un jour dans le futur : rejeté ; un jour : lu")
+
+-- Le pire cas réaliste tient dans MAX_MORCEAUX (10) : un journal plein (25 quêtes de 1 à 3 objectifs, 8 zones), 30
+-- décisions (dont 10 remises) signées de prénoms longs, 10 quêtes d'avant, 10 quêtes des autres rendues depuis l'entrée
+-- et 10 avant ; l'id de la Compagnie est celui de Compagnie.lua (GUID et heure serveur). Le texte des objectifs ne part pas.
+local ZONES = { "Contreforts de Hautebrande", "Marche de l'Ouest", "Forêt d'Elwynn", "Les Carmines", "Bois de la Pénombre",
+  "Loch Modan", "Les Paluns", "Vallée de Strangleronce" }
+local OBJECTIFS = { { texte = "Raptor flagellant : 12/15 |4personnage tué:personnages tués;", fait = 12, total = 15 },
+  { texte = "Croc de raptor : 9/10", fait = 9, total = 10 }, { texte = "Sauvetage de Kernobee", fait = 0, total = 1 } }
+local plein = { niveau = 60, quetes = {}, rendues = {}, renduesAvant = {}, avant = {}, ecartees = {}, auberge = "Comté-de-l'Or",
+  liaison = 1764000000, finRecharge = 1764003600 }
+for i = 1, 25 do
+  local o = {}
+  for k = 1, i % 3 + 1 do o[k] = OBJECTIFS[k] end
+  plein.quetes[90000 + i] = { finie = false, zone = ZONES[i % 8 + 1], objectifs = o }
+end
+for i = 1, 10 do plein.avant[90000 + i] = true; plein.rendues[91000 + i] = true; plein.renduesAvant[92000 + i] = true end
+for i = 1, 30 do plein.ecartees[93000 + i] = { ecartee = i % 3 > 0, date = 1764000000 + i, par = i % 2 == 0 and "Éléonorette" or "Virgile" } end
+local idC = "Player-4395-0A1B2C3D-1764000000"
+local parts = ns.morceaux(idC, ns.encoder(plein), 99)
+assert(#parts >= 1 and #parts <= 10, "le pire cas réaliste tient : " .. #parts .. " morceaux, " .. #ns.encoder(plein) .. " octets")
+print(("Compagnie : pire cas réaliste, %d octets, %d morceaux sur 10"):format(#ns.encoder(plein), #parts))
+
+-- Écarter, Remettre (#21) : une décision datée de la Compagnie. Les décisions reçues avec un état : la plus récente
+-- l'emporte, quête par quête ; fusionner rend celles qui ont changé (pour le message dans le chat).
+local dbE = {}
+ns.decider(dbE, PATTES, true, "Virgile", 100)
+assert(dbE.ecartees[PATTES].ecartee and dbE.ecartees[PATTES].par == "Virgile", "écartée par Virgile")
+local changees = ns.fusionner(dbE, { [PATTES] = { ecartee = false, date = 90, par = "Léo" } })
+assert(#changees == 0 and dbE.ecartees[PATTES].ecartee, "une remise plus ancienne : ignorée")
+changees = ns.fusionner(dbE, { [PATTES] = { ecartee = false, date = 120, par = "Léo" }, [CHASSE] = { ecartee = true, date = 50, par = "Mira" } })
+assert(#changees == 2 and changees[1].quete == PATTES and changees[2].quete == CHASSE, "deux décisions nouvelles, triées")
+assert(not dbE.ecartees[PATTES].ecartee and dbE.ecartees[PATTES].par == "Léo", "remise par Léo, la plus récente : elle l'emporte")
+assert(#ns.fusionner(dbE, { [PATTES] = { ecartee = false, date = 120, par = "Léo" } }) == 0, "la même décision : rien de nouveau")
+ns.decider(dbE, PATTES, true, "Virgile", 130)
+assert(dbE.ecartees[PATTES].ecartee, "écartée de nouveau")
+-- À la même seconde, écarter l'emporte sur remettre, dans les deux sens.
+assert(#ns.fusionner(dbE, { [PATTES] = { ecartee = false, date = 130, par = "Léo" } }) == 0 and dbE.ecartees[PATTES].ecartee,
+  "même seconde : la remise ne l'emporte pas sur l'écartée")
+ns.decider(dbE, PATTES, false, "Virgile", 140)
+assert(#ns.fusionner(dbE, { [PATTES] = { ecartee = true, date = 140, par = "Léo" } }) == 1 and dbE.ecartees[PATTES].ecartee,
+  "même seconde : l'écartée l'emporte sur la remise")
+-- Une remise reçue n'est annoncée que si je connaissais la quête écartée ; gardée quand même.
+changees = ns.fusionner(dbE, { [KOBOLDS] = { ecartee = false, date = 150, par = "Léo" } })
+assert(#changees == 0 and dbE.ecartees[KOBOLDS] and not dbE.ecartees[KOBOLDS].ecartee, "remise d'une quête inconnue : pas annoncée")
+changees = ns.fusionner(dbE, { [PATTES] = { ecartee = false, date = 160, par = "Léo" } })
+assert(#changees == 1 and changees[1].ecartee == false, "remise d'une quête que je savais écartée : annoncée")
+-- Les remises de plus de 7 jours sont oubliées ; une écartée reste, si vieille soit-elle.
+local dbP = { ecartees = { [1] = { ecartee = false, date = 1000, par = "Léo" }, [2] = { ecartee = false, date = 1000 + 86400, par = "Léo" },
+  [3] = { ecartee = true, date = 1, par = "Léo" } } }
+ns.purger(dbP, 1001 + 7 * 86400)
+assert(not dbP.ecartees[1] and dbP.ecartees[2] and dbP.ecartees[3], "remise de plus de 7 jours oubliée, écartée gardée")
 -- Le foyer (#9) part avec l'état : auberge, heure de la liaison, heure où la pierre est prête → identique.
-local avecFoyer = { niveau = 12, quetes = {}, rendues = {}, abandonnees = {}, auberge = "Comté-de-l'Or", liaison = 1763990000,
+local avecFoyer = { niveau = 12, quetes = {}, rendues = {}, ecartees = {}, avant = {}, renduesAvant = {}, auberge = "Comté-de-l'Or", liaison = 1763990000,
   finRecharge = 1764002400 }
 corps = ns.encoder(avecFoyer)
-assert(corps == "12#####Comté-de-l'Or#1763990000#1764002400", corps)
+assert(corps == "12#####Comté-de-l'Or#1763990000#1764002400##", corps)
 assert(pareil(ns.decoder(corps), avecFoyer), "avec foyer : identique")
 -- Mal formé : tout l'état est rejeté (auberge comme une zone ; heures entières, positives, 32 bits).
 for _, f in ipairs({ "a|b#1#1", ("x"):rep(49) .. "#1#1", "a;b##", "Or#x#", "Or#0#", "Or##-1", "Or##2147483648", "Or#1.5#" }) do
-  assert(ns.decoder("12#####" .. f) == nil, "foyer rejeté : " .. f:sub(1, 20))
+  assert(ns.decoder("12#####" .. f .. "##") == nil, "foyer rejeté : " .. f:sub(1, 20))
 end
 -- « partageable » (lu dans mon journal) ne part pas.
-assert(ns.encoder({ niveau = 2, quetes = { [7] = { finie = false, objectifs = {}, partageable = true } } }) == "2#7:0######",
+assert(ns.encoder({ niveau = 2, quetes = { [7] = { finie = false, objectifs = {}, partageable = true } } }) == "2#7:0########",
   "partageable ne part pas")
 
 -- La zone de chaque quête (#13 : l'en-tête de zone de mon journal) part avec l'état : encodage puis décodage → identique.
-local avecZones = { niveau = 35, rendues = { [1453] = true }, abandonnees = {}, quetes = {
+local avecZones = { niveau = 35, rendues = { [1453] = true }, ecartees = {}, avant = {}, renduesAvant = {}, quetes = {
   [PATTES] = { finie = false, objectifs = { { fait = 5, total = 8 } }, zone = "Forêt d'Elwynn" },
   [CHASSE] = { finie = true, objectifs = {}, zone = "Marche de l'Ouest" },
   [95789] = { finie = false, objectifs = { { fait = 0, total = 1 } }, zone = "Forêt d'Elwynn" },
@@ -515,19 +670,19 @@ corps = ns.encoder(avecZones)
 assert(pareil(ns.decoder(corps), avecZones), "avec zones : identique (" .. corps .. ")")
 assert(ns.encoder(ns.decoder(corps)) == corps, "avec zones : toujours encodé pareil")
 -- Un état sans zone est accepté (champ des zones vide).
-local sansZone = assert(ns.decoder("35#1001:0:5/8;659:0#1453#####"), "sans zone : accepté")
+local sansZone = assert(ns.decoder("35#1001:0:5/8;659:0#1453#######"), "sans zone : accepté")
 assert(sansZone.quetes[1001].zone == nil and sansZone.quetes[1001].objectifs[1].fait == 5, "…ses quêtes sans zone")
 -- Une zone mal formée fait rejeter tout l'état : vide, trop longue, caractère de contrôle, « | » (codes du chat), un
 -- séparateur du format ; une zone sans quête, une quête absente de l'état ou rangée deux fois, une zone répétée.
 for _, z in ipairs({ "", ("x"):rep(49), "a|cffff0000b", "a\nb", "a\1b", "a\0b", "a\127b", "a#b", "a;b", "a:b", "a,b",
   "a/b", "a=b" }) do
-  assert(ns.decoder("35#1001:0#1453#" .. z .. "=1001####") == nil, "zone rejetée : " .. z:sub(1, 20))
+  assert(ns.decoder("35#1001:0#1453#" .. z .. "=1001######") == nil, "zone rejetée : " .. z:sub(1, 20))
 end
-assert(ns.decoder("35#1001:0##" .. ("é"):rep(24) .. "=1001####"), "48 octets : acceptée")
+assert(ns.decoder("35#1001:0##" .. ("é"):rep(24) .. "=1001######"), "48 octets : acceptée")
 for _, mauvais in ipairs({ "35#1001:0##Elwynn#", "35#1001:0##Elwynn=#", "35#1001:0##Elwynn=x#", "35#1001:0##Elwynn=2002#",
   "35#1001:0##A=1001;B=1001#", "35#1001:0;1002:0##A=1001;A=1002#", "35#1001:0##A=1001,1001#", "35#1001:0##A=1001;#",
   "35#1001:0##A=1001##" }) do
-  assert(ns.decoder(mauvais .. "###") == nil, "rejeté : " .. mauvais)
+  assert(ns.decoder(mauvais .. "#####") == nil, "rejeté : " .. mauvais)
 end
 -- Mon journal peut avoir un en-tête que le format refuse : il ne part pas (la quête part sans zone), l'état reste lisible.
 local bizarre = { niveau = 5, rendues = {}, quetes = { [1] = { finie = false, objectifs = {}, zone = "a|b" },
@@ -544,7 +699,7 @@ assert(c.quetes[PATTES].zone == "Forêt d'Elwynn" and c.quetes[CHASSE].zone == "
 
 -- Un état part en morceaux de messages d'add-on bornés (255 octets) et se recompose chez un membre.
 local V2, L2, Z2 = "Player-1-0000000V", "Player-1-0000000L", "Player-1-0000000Z"
-local gros = { niveau = 40, quetes = {}, rendues = {}, abandonnees = {} }
+local gros = { niveau = 40, quetes = {}, rendues = {}, ecartees = {}, avant = {}, renduesAvant = {} }
 for i = 1, 35 do gros.quetes[90000 + i] = { finie = false, objectifs = { { fait = 3, total = 10 }, { fait = 1, total = 12 } } } end
 for i = 1, 60 do gros.rendues[100000 + i] = true end
 local morceaux = ns.morceaux("id-1234567890", ns.encoder(gros), 7)
@@ -557,11 +712,21 @@ local function compagnieDe(moi)
 end
 local recus = {}
 local function ioRecu() return { maj = function() recus.maj = (recus.maj or 0) + 1 end,
-  demande = function(de) recus.demande = de end, maintenant = function() return recus.t or 1000 end } end
+  annoncer = function(t) recus.annonces = t end,
+  demande = function(de) recus.demande = de end, maintenant = function() return recus.t or 1000 end,
+  heure = function() return 1764000000 end } end
 local chezV = compagnieDe(V2)
 for _, m in ipairs(morceaux) do ns.recevoirEtat(chezV, L2, m, ioRecu()) end
 assert(pareil(chezV.db.etats[L2], gros), "l'état de Léo est recomposé et gardé comme dernier état connu")
 assert(recus.maj and recus.maj > 0, "le suivi est redessiné")
+-- Ses décisions sur les quêtes écartées (#21) rejoignent celles de la Compagnie, et celles qui changent sont annoncées.
+recus.annonces = nil
+for _, m in ipairs(ns.morceaux("id-1234567890", ns.encoder(avecEcartees), 9)) do ns.recevoirEtat(chezV, L2, m, ioRecu()) end
+assert(chezV.db.ecartees[783].ecartee and chezV.db.ecartees[783].par == "Léo", "la décision de Léo est celle de la Compagnie")
+assert(recus.annonces and #recus.annonces == 1 and recus.annonces[1].quete == 783, "l'écartée annoncée, pas la remise d'une quête inconnue")
+recus.annonces = nil
+for _, m in ipairs(ns.morceaux("id-1234567890", ns.encoder(avecEcartees), 10)) do ns.recevoirEtat(chezV, L2, m, ioRecu()) end
+assert(recus.annonces == nil, "reçues de nouveau : rien à annoncer")
 
 -- Un message d'un non-membre ne change rien (ni état, ni demande), pas plus qu'un état d'une autre Compagnie.
 chezV = compagnieDe(V2)
@@ -623,6 +788,9 @@ dbF.etats = { [L2] = avecFoyer }
 local lf = ns.membresDuCalcul(dbF, V2, { quetes = {} }, {})[2]
 assert(lf.auberge == "Comté-de-l'Or" and lf.finRecharge == 1764002400 and ns.corriger(lf, {}, function() end).liaison == 1763990000,
   "le foyer passe au calcul")
+dbF.etats = { [L2] = avecAvant }
+lf = ns.corriger(ns.membresDuCalcul(dbF, V2, { quetes = {} }, {})[2], {}, function() end)
+assert(lf.avant[2002] and lf.renduesAvant[783], "les quêtes d'avant et les rendues avant l'entrée passent au calcul")
 
 -- Quand un membre est dans le groupe, IsUnitOnQuest corrige son état : une quête qu'il n'a plus est retirée, une quête
 -- qu'il a prise sans qu'on le sache compte à 0 ; une réponse inconnue (nil) ne change rien. Son état gardé n'est pas touché.
@@ -670,10 +838,26 @@ refuse = false
 ns.signaler(e2, false, ioEnvoi)
 table.remove(programmes, 1).fn()
 assert(#partis == 3, "le même état repart : " .. #partis)
+-- Un état qui ne tient pas dans MAX_MORCEAUX : rien ne part (jamais un état tronqué), et c'est dit une fois.
+local trop = 0
+ioEnvoi.trop = function() trop = trop + 1 end
+local enorme = { niveau = 11, quetes = {}, rendues = {} }
+for i = 1, 120 do enorme.quetes[90000 + i] = { finie = false, objectifs = { { fait = 1, total = 2 }, { fait = 1, total = 2 } }, zone = "Zone " .. i } end
+monEtat = enorme
+for _ = 1, 3 do ns.signaler(e2, true, ioEnvoi); table.remove(programmes, 1).fn() end
+assert(#partis == 3 and trop == 1, "trop gros : rien ne part, dit une fois (" .. trop .. ")")
+monEtat = { niveau = 12, quetes = {}, rendues = {} }
+ns.signaler(e2, false, ioEnvoi)
+table.remove(programmes, 1).fn()
+assert(#partis == 4, "de nouveau petit : il part")
+monEtat = enorme
+ns.signaler(e2, false, ioEnvoi)
+table.remove(programmes, 1).fn()
+assert(trop == 2, "trop gros de nouveau : redit")
 -- Sans Compagnie, rien ne part.
 local e3 = { db = {} }
 ns.signaler(e3, true, ioEnvoi)
 table.remove(programmes, 1).fn()
-assert(#partis == 3, "sans Compagnie : rien")
+assert(#partis == 4, "sans Compagnie : rien")
 
 print("Compagnie : états de la Compagnie OK")
