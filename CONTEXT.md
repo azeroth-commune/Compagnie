@@ -40,7 +40,7 @@ _Avoid_: quête non partageable
 _Avoid_: quête ignorée, quête refusée
 
 **Quête en avance**:
-Écart où un membre a rendu, ou s'apprête à rendre, une quête dont l'avancement commun n'est pas complet ; l'add-on avertit, il ne bloque pas.
+Écart où un membre a rendu, ou s'apprête à rendre, une quête dont l'avancement commun n'est pas complet ; l'add-on avertit, il ne bloque pas. Avant : un bandeau sous la fenêtre de remise du jeu (« La Compagnie n'a pas fini : 5/8 »), le bouton du jeu intact. Après : chez chaque membre qui l'a encore sans l'avoir finie, « Rendue en avance », sans nommer qui l'a rendue ; résorbée quand il l'a finie.
 _Avoid_: remise anticipée
 
 **Niveau insuffisant**:

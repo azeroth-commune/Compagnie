@@ -7,7 +7,8 @@
 --     en direct, le jeu ne le dit que pour mes quêtes)
 -- Sortie : { niveau = 9, quetes = { [idQuête] = { objectifs = { … }, aRendre = false, enAttente = { "Léo" }, zone = … } },
 --           aFaire = { { type = "partager", membre = "Virgile", quete = id, manquants = { "Léo" } },
---                      { type = "abandonnee", membre = "Léo", quete = id, par = { "Virgile" } } } }
+--                      { type = "abandonnee", membre = "Léo", quete = id, par = { "Virgile" } },
+--                      { type = "avance", membre = "Léo", quete = id, par = { "Virgile" } } } }
 -- Les quêtes de la Compagnie sont celles qu'au moins un membre a en cours. Pour chacune, membre par membre :
 --   - en cours : son avancement compte, objectif par objectif (le moins avancé l'emporte) ;
 --   - déjà rendue : il ne retient plus la Compagnie ;
@@ -55,13 +56,17 @@ end
 --     celui-ci, « Abandonner aussi » ; résorbée quand plus personne ne l'a ;
 --   - quête à partager : un membre l'a, partageable, d'autres ne l'ont ni en cours, ni rendue : chez lui, « Partager » ;
 --     résorbée quand tous l'ont. Une quête abandonnée par un membre n'est jamais à partager.
+--   - quête en avance : un membre l'a rendue pendant qu'un autre l'a encore, pas finie : chez celui-ci, l'écart dit ce
+--     qui s'est passé (par = qui l'a rendue, jamais affiché) ; résorbée quand il l'a finie.
 function ns.ecarts(membres)
-  local t, abandons = {}, {}
+  local t, abandons, rendues = {}, {}, {}
   for _, m in ipairs(membres) do
     for id in pairs(m.abandonnees or {}) do abandons[id] = abandons[id] or {}; table.insert(abandons[id], m.nom) end
+    for id in pairs(m.rendues or {}) do rendues[id] = rendues[id] or {}; table.insert(rendues[id], m.nom) end
   end
   for _, m in ipairs(membres) do
     for id, q in pairs(m.quetes or {}) do
+      if rendues[id] and not q.finie then t[#t + 1] = { type = "avance", membre = m.nom, quete = id, par = rendues[id] } end
       local par = {}
       for _, nom in ipairs(abandons[id] or {}) do if nom ~= m.nom then par[#par + 1] = nom end end
       if #par > 0 then t[#t + 1] = { type = "abandonnee", membre = m.nom, quete = id, par = par }

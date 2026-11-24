@@ -112,7 +112,7 @@ c = ns.calculer({ { nom = "Virgile", niveau = 5, quetes = { [KOBOLDS] = kobolds(
 assert(#c.aFaire == 0, "partagée : l'écart n'apparaît plus")
 c = ns.calculer({ { nom = "Virgile", niveau = 5, quetes = { [KOBOLDS] = kobolds(true) } },
   { nom = "Léo", niveau = 5, quetes = {}, rendues = { [KOBOLDS] = true } } })
-assert(#c.aFaire == 0, "déjà rendue par Léo : rien à partager")
+assert(#c.aFaire == 1 and c.aFaire[1].type == "avance", "déjà rendue par Léo : rien à partager (elle est en avance)")
 
 -- Abandon par un membre : « abandonnée » chez chacun des autres qui l'a encore, jamais chez celui qui l'a abandonnée ;
 -- une quête abandonnée n'est plus à partager (Mira ne l'a pas : on ne la lui propose pas).
@@ -150,6 +150,26 @@ c = ns.calculer({
 })
 assert(#c.aFaire == 2 and c.aFaire[1].quete == PATTES and c.aFaire[1].type == "partager" and c.aFaire[2].type == "abandonnee",
   "trié par quête")
+
+-- Quête en avance (#8) : rendue par un seul membre, les autres en cours → « en avance » chez chacun des autres qui ne
+-- l'a pas finie, jamais chez celui qui l'a rendue ; résorbée quand il l'a finie.
+c = ns.calculer({
+  { nom = "Virgile", niveau = 10, quetes = {}, rendues = { [PATTES] = true } },
+  { nom = "Léo", niveau = 10, absent = true, quetes = { [PATTES] = pattes(5) } },
+  { nom = "Mira", niveau = 10, quetes = { [PATTES] = pattes(2) } },
+})
+assert(#c.aFaire == 2, "chez Léo et chez Mira : " .. #c.aFaire)
+for i, nom in ipairs({ "Léo", "Mira" }) do
+  x = c.aFaire[i]
+  assert(x.type == "avance" and x.membre == nom and x.quete == PATTES, ("écart %s %s"):format(x.type, x.membre))
+  assert(#x.par == 1 and x.par[1] == "Virgile", "rendue par Virgile")
+end
+c = ns.calculer({
+  { nom = "Virgile", niveau = 10, quetes = {}, rendues = { [PATTES] = true } },
+  { nom = "Léo", niveau = 10, quetes = { [PATTES] = pattes(8) } },
+})
+assert(#c.aFaire == 0, "Léo l'a finie : résorbée")
+assert(c.quetes[PATTES].aRendre, "et à rendre")
 
 print("Compagnie : calcul de la Compagnie OK")
 
