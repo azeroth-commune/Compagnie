@@ -2,25 +2,36 @@
 -- Entrée : la liste des membres, chacun avec son état (dernier état connu pour un absent) :
 --   { nom = "Léo", niveau = 10, absent = true,
 --     quetes = { [idQuête] = { finie = false, objectifs = { { texte = "Patte de loup", fait = 5, total = 8 }, … } } },
---     rendues = { [idQuête] = true }, abandonnees = { [idQuête] = true } }
+--     rendues = { [idQuête] = true }, abandonnees = { [idQuête] = true },
+--     auberge = "Comté-de-l'Or", liaison = 1764000000, finRecharge = 1764002400 } (heures serveur ; nil : inconnu, ou
+--     pierre prête)
 --     (une quête peut porter sa zone : zone = "Forêt d'Elwynn", et partageable = true : seulement dans mon journal, lu
 --     en direct, le jeu ne le dit que pour mes quêtes)
--- Sortie : { niveau = 9, quetes = { [idQuête] = { objectifs = { … }, aRendre = false, enAttente = { "Léo" }, zone = … } },
+-- maintenant : l'heure serveur (pour la pierre de la Compagnie).
+-- Sortie : { niveau = 9, foyer = "Comté-de-l'Or", pierre = 2400 (secondes avant qu'elle soit prête ; 0 : prête),
+--           quetes = { [idQuête] = { objectifs = { … }, aRendre = false, enAttente = { "Léo" }, zone = … } },
 --           aFaire = { { type = "partager", membre = "Virgile", quete = id, manquants = { "Léo" } },
 --                      { type = "abandonnee", membre = "Léo", quete = id, par = { "Virgile" } },
---                      { type = "avance", membre = "Léo", quete = id, par = { "Virgile" } } } }
+--                      { type = "avance", membre = "Léo", quete = id, par = { "Virgile" } },
+--                      { type = "foyer", membre = "Léo", auberge = "Comté-de-l'Or" } } }
 -- Les quêtes de la Compagnie sont celles qu'au moins un membre a en cours. Pour chacune, membre par membre :
 --   - en cours : son avancement compte, objectif par objectif (le moins avancé l'emporte) ;
 --   - déjà rendue : il ne retient plus la Compagnie ;
 --   - ni l'un ni l'autre : il compte à 0 et la Compagnie l'attend (jamais à rendre sans lui).
 -- Le texte d'un objectif (affichage seulement) est pris chez le membre qui l'a, quel que soit son avancement.
 -- Un absent compte comme les autres, avec son dernier état connu : le calcul ne lit donc pas « absent ».
+-- Le foyer de la Compagnie (#9) : l'auberge du membre lié le plus récemment, sans vote ni chef. Une liaison sans date
+-- (faite add-on éteint : rien n'est deviné) ne l'emporte jamais ; aucune date connue : pas de foyer.
+-- La pierre de la Compagnie : prête quand celle de chaque membre l'est ; sinon le plus long reste, sans dire de qui.
+-- Comme le niveau, un membre jamais entendu ne compte pas.
 local _, ns = ...
 
-function ns.calculer(membres)
-  local quetes, niveau = {}, nil
+function ns.calculer(membres, maintenant)
+  local quetes, niveau, foyer, recent, pierre = {}, nil, nil, 0, 0
   for _, m in ipairs(membres) do
     if m.niveau and (not niveau or m.niveau < niveau) then niveau = m.niveau end -- un membre jamais entendu : sans niveau
+    if m.auberge and (m.liaison or 0) > recent then foyer, recent = m.auberge, m.liaison end
+    if m.finRecharge then pierre = math.max(pierre, m.finRecharge - maintenant) end
     for id in pairs(m.quetes or {}) do quetes[id] = { objectifs = {}, aRendre = true, enAttente = {} } end
   end
   for id, commune in pairs(quetes) do
@@ -48,7 +59,7 @@ function ns.calculer(membres)
       end
     end
   end
-  return { niveau = niveau, quetes = quetes, aFaire = ns.ecarts(membres) }
+  return { niveau = niveau, foyer = foyer, pierre = pierre, quetes = quetes, aFaire = ns.ecarts(membres, foyer) }
 end
 
 -- La liste À faire : les écarts, chacun avec le membre visé (celui qui agit) et l'action ; triée par quête.
@@ -58,9 +69,11 @@ end
 --     résorbée quand tous l'ont. Une quête abandonnée par un membre n'est jamais à partager.
 --   - quête en avance : un membre l'a rendue pendant qu'un autre l'a encore, pas finie : chez celui-ci, l'écart dit ce
 --     qui s'est passé (par = qui l'a rendue, jamais affiché) ; résorbée quand il l'a finie.
-function ns.ecarts(membres)
+--   - foyer différent : un membre lié à une autre auberge que le foyer (sans quête : en tête de liste).
+function ns.ecarts(membres, foyer)
   local t, abandons, rendues = {}, {}, {}
   for _, m in ipairs(membres) do
+    if foyer and m.auberge and m.auberge ~= foyer then t[#t + 1] = { type = "foyer", membre = m.nom, auberge = foyer } end
     for id in pairs(m.abandonnees or {}) do abandons[id] = abandons[id] or {}; table.insert(abandons[id], m.nom) end
     for id in pairs(m.rendues or {}) do rendues[id] = rendues[id] or {}; table.insert(rendues[id], m.nom) end
   end
@@ -80,7 +93,7 @@ function ns.ecarts(membres)
     end
   end
   table.sort(t, function(a, b)
-    if a.quete ~= b.quete then return a.quete < b.quete end
+    if a.quete ~= b.quete then return (a.quete or 0) < (b.quete or 0) end
     if a.type ~= b.type then return a.type < b.type end
     return tostring(a.membre) < tostring(b.membre)
   end)

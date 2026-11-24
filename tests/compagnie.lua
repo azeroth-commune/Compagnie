@@ -337,13 +337,13 @@ test("le suivi se dessine depuis une Compagnie fabriquée : 5/8, en attente de L
             assertTrue(not contient(t, "À rendre"), t)
             assertTrue(contient(t, "Raptor flagellant : 1/10 |4personnage tué:personnages tués;"), "texte du jeu, compte commun : " .. t)
             -- Léo a fini (son état arrive par chuchotement) : À rendre chez tout le monde.
-            chuchote("E;essai;1/1/1;10#1001:1:8/8;95789:0:1/10###")
+            chuchote("E;essai;1/1/1;10#1001:1:8/8;95789:0:1/10######")
             assertEquals(1, CompagnieDB.etats[LEO].quetes[1001].objectifs[1].fait == 8 and 1 or 0, "état reçu gardé")
             t = suivi()
             assertTrue(contient(t, "Patte de loup : 8/8") and contient(t, "À rendre"), t)
             assertTrue(not contient(t, "En attente"), "Léo n'est pas nommé : " .. t)
             -- Un état d'un non-membre ne change rien.
-            chuchote("E;essai;1/1/1;10#1001:0:0/8###", "Zoé Pierre")
+            chuchote("E;essai;1/1/1;10#1001:0:0/8######", "Zoé Pierre")
             assertTrue(contient(suivi(), "À rendre"), "non-membre ignoré")
         end)
     end)
@@ -393,7 +393,7 @@ test("le dernier état connu d'un absent est retrouvé après un /reload et comp
             fabriquer({ guid = LEO, nom = "Léo Lame" })
             CompagnieDB.etats = nil
             charger()
-            chuchote("E;essai;1/1/1;10#1001:0:5/8###")
+            chuchote("E;essai;1/1/1;10#1001:0:5/8######")
             -- /reload : CompagnieDB relue (une copie, comme le fichier de sauvegarde), Léo ne s'est pas reconnecté.
             local function copie(t)
                 if type(t) ~= "table" then return t end
@@ -428,7 +428,7 @@ test("une demande d'état reçoit le mien : au groupe du jeu, ou chuchoté hors 
             local m = envoyes[#envoyes]
             assertEquals("WHISPER", m.canal)
             assertEquals("Léo Lame", m.cible)
-            assertTrue(m.texte:find("^E;essai;%d+/1/1;%d+#1001:0:3/8##Forêt d'Elwynn=1001#$") ~= nil, m.texte)
+            assertTrue(m.texte:find("^E;essai;%d+/1/1;%d+#1001:0:3/8##Forêt d'Elwynn=1001##[^#]*#%d*#%d*$") ~= nil, m.texte)
         end)
         avecLeo(function(envoyes)
             recu("D;essai")
@@ -449,7 +449,7 @@ test("un membre hors du groupe entendu puis muet : redemandé, absent au bout de
             CompagnieDB.etats = nil
             charger()
             ecouler(5)
-            chuchote("E;essai;1/1/1;10#1001:0:5/8###")
+            chuchote("E;essai;1/1/1;10#1001:0:5/8######")
             assertTrue(not contient(suivi(), "En attente"), "Léo vient d'écrire : présent")
             local n = #envoyes
             ecouler(125)
@@ -460,7 +460,7 @@ test("un membre hors du groupe entendu puis muet : redemandé, absent au bout de
             end
             assertTrue(demandes >= 1 and demandes <= 3, "demandé une fois par minute de silence : " .. demandes)
             assertTrue(contient(suivi(), "En attente de Léo"), "sans réponse depuis 2 min : absent, " .. suivi())
-            chuchote("E;essai;2/1/1;10#1001:0:5/8###") -- il répond
+            chuchote("E;essai;2/1/1;10#1001:0:5/8######") -- il répond
             assertTrue(not contient(suivi(), "En attente"), "de nouveau présent")
         end)
     end)
@@ -471,7 +471,7 @@ test("un membre du groupe déconnecté n'est pas présent, même entendu il y a 
     avecJournal({ pattes(8) }, function()
         fabriquer({ guid = LEO, nom = "Léo Lame" })
         charger()
-        avecGroupe({}, false, function() chuchote("E;essai;1/1/1;10#1001:0:5/8###") end)
+        avecGroupe({}, false, function() chuchote("E;essai;1/1/1;10#1001:0:5/8######") end)
         avecGroupe({ { LEO, "Léo", "Lame", horsLigne = true } }, false, function()
             evenement("GROUP_ROSTER_UPDATE")
             assertTrue(contient(suivi(), "En attente de Léo"), suivi())
@@ -718,7 +718,7 @@ test("la liste À faire se dessine avec ses boutons ; aucun abandon sans un clic
             assertEquals(n + 1, #pousses, "partagée")
             assertEquals(3, pousses[#pousses], "la ligne des Kobolds dans mon journal (en-tête, pattes, Kobolds)")
             -- Léo accepte les Kobolds et abandonne les pattes : son état le dit.
-            chuchote("E;essai;3/1/1;5#1003:0:0/8###1001")
+            chuchote("E;essai;3/1/1;5#1003:0:0/8###1001###")
             assertTrue(CompagnieDB.etats[LEO].abandonnees[1001], "l'état reçu porte ses abandons")
             local a = bouton("CompagnieSuiviAFaire1")
             assertEquals("Abandonner aussi : Les pattes de loup", a and a:GetText())
@@ -742,13 +742,13 @@ test("la liste À faire se dessine avec ses boutons ; aucun abandon sans un clic
             assertEquals(1, abandons, "confirmé : un abandon")
             assertTrue(CompagnieDB.abandonnees[1001], "noté abandonné")
             ecouler(5)
-            assertTrue(envoyes[#envoyes].texte:find("#1001$") ~= nil, "mon état porte l'abandon : " .. envoyes[#envoyes].texte)
+            assertTrue(envoyes[#envoyes].texte:find("#1001#[^#]*#%d*#%d*$") ~= nil, "mon état porte l'abandon : " .. envoyes[#envoyes].texte)
             abandons = 0
         end)
         -- Le jeu retire les pattes de mon journal : l'écart est résorbé, il n'apparaît plus.
         avecJournal({ KOBOLDS }, function()
             avecLeo(function()
-                chuchote("E;essai;4/1/1;5#1003:0:0/8###1001")
+                chuchote("E;essai;4/1/1;5#1003:0:0/8###1001###")
                 local b = bouton("CompagnieSuiviAFaire1")
                 assertEquals("Partager en groupe : Les Kobolds", b and b:GetText(), "seul l'écart des Kobolds reste (pour Mira)")
                 assertNil(bouton("CompagnieSuiviAFaire2"))
@@ -777,10 +777,10 @@ test("mode Compagnie éteint : la petite liste À faire reste visible ; sa croix
             assertTrue(CompagnieAFaireFrame and CompagnieAFaireFrame:IsShown(), "la petite liste est visible")
             assertEquals("Partager en groupe : Les Kobolds", bouton("CompagniePetiteListe1"):GetText())
             -- Léo prend les Kobolds : rien à faire, la petite liste se cache.
-            chuchote("E;essai;1/1/1;5#1001:0;1003:0###")
+            chuchote("E;essai;1/1/1;5#1001:0;1003:0######")
             assertTrue(not CompagnieAFaireFrame:IsShown(), "rien à faire : cachée")
             -- Léo abandonne les pattes : elle revient ; sa croix la ferme, elle reste fermée tant que la liste ne change pas.
-            chuchote("E;essai;2/1/1;5#1003:0###1001")
+            chuchote("E;essai;2/1/1;5#1003:0###1001###")
             assertTrue(CompagnieAFaireFrame:IsShown(), "un écart : visible")
             assertEquals("Abandonner aussi : Les pattes de loup", bouton("CompagniePetiteListe1"):GetText())
             CompagnieAFaireFrame:Hide() -- la croix
@@ -788,7 +788,7 @@ test("mode Compagnie éteint : la petite liste À faire reste visible ; sa croix
             ecouler(1)
             evenement("GROUP_ROSTER_UPDATE")
             assertTrue(not CompagnieAFaireFrame:IsShown(), "fermée : elle le reste")
-            chuchote("E;essai;3/1/1;5####1001,1003") -- Léo abandonne aussi les Kobolds : la liste change
+            chuchote("E;essai;3/1/1;5####1001,1003###") -- Léo abandonne aussi les Kobolds : la liste change
             assertTrue(CompagnieAFaireFrame:IsShown(), "la liste a changé : de retour")
             assertEquals(0, abandons, "aucun abandon sans clic")
             -- Mode Compagnie rallumé : la petite liste s'efface, le suivi porte les boutons.
@@ -814,7 +814,7 @@ test("abandonner par le journal du jeu : noté, mon état le porte ; sans Compag
             C_QuestLog.AbandonQuest()
             assertTrue(CompagnieDB.abandonnees and CompagnieDB.abandonnees[1001], "noté abandonné")
             ecouler(5)
-            assertTrue(envoyes[#envoyes].texte:find("#1001$") ~= nil, "mon état porte l'abandon : " .. envoyes[#envoyes].texte)
+            assertTrue(envoyes[#envoyes].texte:find("#1001#[^#]*#%d*#%d*$") ~= nil, "mon état porte l'abandon : " .. envoyes[#envoyes].texte)
         end)
         eteindre()
         C_QuestLog.SetSelectedQuest(1001)
@@ -856,12 +856,12 @@ test("remise : le bandeau s'affiche quand l'avancement commun n'est pas complet,
                 assertTrue(not recouvre(CompagnieBandeau, bouton), "bandeau hors du bouton")
                 assertTrue(not recouvre(CompagnieBandeau, QuestFrame), "bandeau hors de la fenêtre du jeu")
                 -- Léo a fini : la quête est À rendre, plus de bandeau (aussi par la page de progression).
-                chuchote("E;essai;1/1/1;10#1001:1:8/8###")
+                chuchote("E;essai;1/1/1;10#1001:1:8/8######")
                 assertTrue(not CompagnieBandeau:IsShown(), "À rendre : pas de bandeau")
                 evenement("QUEST_PROGRESS")
                 assertTrue(not CompagnieBandeau:IsShown(), "À rendre, page de progression : pas de bandeau")
                 -- Léo retombe à 5/8 (autre envoi) ; la fenêtre se ferme : le bandeau part avec elle.
-                chuchote("E;essai;2/1/1;10#1001:0:5/8###")
+                chuchote("E;essai;2/1/1;10#1001:0:5/8######")
                 evenement("QUEST_PROGRESS")
                 assertTrue(CompagnieBandeau:IsShown(), "progression : bandeau")
                 evenement("QUEST_FINISHED")
@@ -884,7 +884,7 @@ test("quête en avance : Léo a rendu les pattes pendant que j'en suis à 5/8, l
                 [1001] = { finie = true, objectifs = { { fait = 8, total = 8 } } } } } }
             charger()
             assertNil(bouton("CompagnieSuiviAFaire1"), "pas encore d'écart")
-            chuchote("E;essai;1/1/1;10##1001##") -- Léo l'a rendue
+            chuchote("E;essai;1/1/1;10##1001#####") -- Léo l'a rendue
             local b = bouton("CompagnieSuiviAFaire1")
             assertEquals("Rendue en avance : Les pattes de loup", b and b:GetText())
             assertTrue(not contient(b:GetText(), "Léo"), "personne n'est nommé")
@@ -898,4 +898,65 @@ test("quête en avance : Léo a rendu les pattes pendant que j'en suis à 5/8, l
         end)
     end)
     eteindre()
+end)
+
+---------------------------------------------------------------------------------------------------
+-- Foyer et pierre de la Compagnie (#9).
+
+test("foyer et pierre se dessinent depuis une Compagnie fabriquée, sans nommer personne ; ma liaison part avec mon état", function()
+    local g = { GetBindLocation = GetBindLocation, GetServerTime = GetServerTime, cd = C_Container.GetItemCooldown }
+    local maintenant, auberge, maPierre = 1764000000, "Hurlevent", { 0, 0 }
+    GetBindLocation = function() return auberge end
+    GetServerTime = function() return maintenant end
+    C_Container.GetItemCooldown = function(id) assertEquals(6948, id) return maPierre[1], maPierre[2], 1 end
+    local ok, err = pcall(function()
+        avecJournal({ pattes(3) }, function()
+            fabriquer({ guid = LEO, nom = "Léo Lame" })
+            CompagnieDB.modeCompagnie, CompagnieDB.foyer = nil, nil
+            -- Léo (absent) s'est lié à Comté-de-l'Or il y a une heure ; sa pierre, d'après son dernier envoi, sera prête
+            -- dans 40 min. Moi : lié à Hurlevent, sans date connue (add-on éteint), pierre prête.
+            CompagnieDB.etats = { [LEO] = { niveau = 5, rendues = {}, abandonnees = {},
+                quetes = { [1001] = { finie = false, objectifs = { { fait = 3, total = 8 } } } },
+                auberge = "Comté-de-l'Or", liaison = maintenant - 3600, finRecharge = maintenant + 2400 } }
+            avecGroupe({}, false, function()
+                charger()
+                local b = bouton("CompagnieSuiviAFaire1")
+                assertEquals("Lie-toi à l'auberge de Comté-de-l'Or", b and b:GetText())
+                assertTrue(not b:IsEnabled(), "rien à cliquer : on se lie chez l'aubergiste")
+                local p = CompagniePierre
+                assertTrue(p and p:IsShown(), "la pierre de la Compagnie est sur le suivi")
+                assertEquals("Foyer dans 40 min", p:GetText())
+                assertTrue(not contient(p:GetText(), "Léo"), "la pierre ne nomme personne")
+                assertEquals("item", p:GetAttribute("type"))
+                assertEquals("item:6948", p:GetAttribute("item"), "le clic utilise ma pierre de foyer")
+                assertTrue(recouvre(p, CompagnieSuiviFrame) and not recouvre(p, CompagnieSuiviAFaire), "en tête du suivi")
+                -- 40 min plus tard (la veille redessine) : prête chez tous.
+                maintenant = maintenant + 2400
+                ecouler(30)
+                assertEquals("Rentrer au foyer", p:GetText())
+                -- J'utilise ma pierre : 20 min de recharge.
+                maPierre = { GetTime(), 1200 }
+                evenement("BAG_UPDATE_COOLDOWN")
+                ecouler(1)
+                assertEquals("Foyer dans 20 min", p:GetText())
+                maPierre = { 0, 0 }
+            end)
+            -- Je me lie à Comté-de-l'Or : l'écart est résorbé, mon état porte l'auberge et l'heure de la liaison.
+            avecLeo(function(envoyes)
+                auberge = "Comté-de-l'Or"
+                evenement("HEARTHSTONE_BOUND")
+                ecouler(5)
+                assertNil(bouton("CompagnieSuiviAFaire1"), "lié au foyer : plus d'écart")
+                local m = envoyes[#envoyes]
+                assertTrue(m and m.texte:find("#Comté%-de%-l'Or#" .. maintenant .. "#$") ~= nil, m and m.texte)
+            end)
+            -- Mode éteint : le suivi se ferme, la pierre avec lui.
+            avecGroupe({}, false, function() dits(function() SlashCmdList.COMPAGNIE("suivi") end) end)
+            assertTrue(not CompagniePierre:IsShown(), "suivi fermé : pierre cachée")
+        end)
+    end)
+    GetBindLocation, GetServerTime, C_Container.GetItemCooldown = g.GetBindLocation, g.GetServerTime, g.cd
+    CompagnieDB.foyer = nil
+    eteindre()
+    if not ok then error(err, 0) end
 end)

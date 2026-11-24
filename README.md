@@ -23,10 +23,13 @@ with the shared progress: a quest is ready to turn in only when everyone is done
 - **Rendre trop tôt ?** Quand tu vas rendre une quête que la Compagnie n'a pas finie, un bandeau sous la fenêtre du jeu
   le dit (« La Compagnie n'a pas fini : 5/8 ») ; le bouton du jeu reste tel quel, tu peux rendre quand même. Les autres
   voient alors « Rendue en avance » dans leur liste À faire, jusqu'à ce qu'ils l'aient finie.
+- **Rentrer ensemble** : le foyer de la Compagnie est l'auberge du dernier membre qui s'y est lié ; les autres voient
+  « Lie-toi à l'auberge de Comté-de-l'Or ». En tête du suivi, un bouton utilise ta pierre de foyer et dit quand celle
+  de la Compagnie sera prête (« Foyer dans 40 min », puis « Rentrer au foyer »), sans dire à cause de qui.
 
 ### À venir
 
-Dans la liste À faire, la quête à aller prendre soi-même ; les quêtes personnelles (classe, métier), le foyer commun de la Compagnie. Voir les
+Dans la liste À faire, la quête à aller prendre soi-même ; les quêtes personnelles (classe, métier). Voir les
 [issues](https://github.com/azeroth-commune/Compagnie/issues).
 
 ## Installation

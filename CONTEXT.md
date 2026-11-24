@@ -62,14 +62,14 @@ Une quête dont l'avancement commun est complet : tous les membres peuvent la re
 ### Foyer
 
 **Foyer de la Compagnie**:
-L'auberge à laquelle la Compagnie est liée : la dernière choisie par un membre ; les autres sont invités à s'y lier.
+L'auberge à laquelle la Compagnie est liée : la dernière choisie par un membre (sans vote ni chef) ; les autres sont invités à s'y lier. Seule compte une liaison que l'add-on du membre a vue se faire : une liaison sans date ne l'emporte jamais, et sans aucune date il n'y a pas encore de foyer.
 _Avoid_: point de retour, bind
 
 **Foyer différent**:
-Écart où un membre est lié à une autre auberge que le foyer de la Compagnie.
+Écart où un membre est lié à une autre auberge que le foyer de la Compagnie : « Lie-toi à l'auberge de Comté-de-l'Or ».
 
 **Pierre de la Compagnie**:
-La pierre de foyer vue par la Compagnie : disponible seulement quand celle de chaque membre l'est (même principe que l'avancement commun).
+La pierre de foyer vue par la Compagnie : disponible seulement quand celle de chaque membre l'est (même principe que l'avancement commun) ; pour un absent, la recharge est recalculée depuis son envoi. Le suivi la montre sur le bouton qui utilise ma pierre (« Foyer dans 40 min », « Rentrer au foyer »), sans dire à cause de qui ; le clic n'est jamais bloqué.
 
 ### Affichage
 

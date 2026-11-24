@@ -100,6 +100,7 @@ end
 -- compte et un code de grammaire (« Raptor flagellant : 2/10 |4personnage tué:personnages tués; ») : il ne part jamais,
 -- il sert à l'affichage, le compte remplacé par celui de la Compagnie.
 local COMPTE = "\1" -- la place du compte dans le texte d'un objectif
+local PIERRE = 6948 -- la pierre de foyer
 local titres = {} -- [idQuête] = titre, vu dans mon journal pendant la session
 
 -- Le texte du jeu, son compte exact « fait/total » remplacé par COMPTE (ni comparé, ni découpé ailleurs) ; sans compte
@@ -149,7 +150,16 @@ local function monEtat()
       if mesAbandons[id] then abandonnees[id] = true end
     end
   end
-  return { niveau = UnitLevel("player"), quetes = quetes, rendues = rendues, abandonnees = abandonnees }
+  -- Le foyer (#9) : l'auberge liée (GetBindLocation) ; l'heure de la liaison seulement si je l'ai vue se faire
+  -- (HEARTHSTONE_BOUND, CompagnieDB.foyer), sinon inconnue ; l'heure serveur où ma pierre de foyer sera prête
+  -- (C_Container.GetItemCooldown : en secondes de GetTime, converties), arrondie à la minute pour que l'état ne change
+  -- pas à chaque lecture.
+  local auberge, f = GetBindLocation(), e.db.foyer
+  local debut, recharge = C_Container.GetItemCooldown(PIERRE)
+  local reste = (debut or 0) > 0 and (recharge or 0) > 1.5 and debut + recharge - GetTime() or 0 -- 1.5 s : temps global
+  return { niveau = UnitLevel("player"), quetes = quetes, rendues = rendues, abandonnees = abandonnees,
+    auberge = auberge ~= "" and auberge or nil, liaison = f and f.auberge == auberge and f.date or nil,
+    finRecharge = reste > 0 and math.ceil((GetServerTime() + reste) / 60) * 60 or nil }
 end
 
 ---------------------------------------------------------------------------------------------------
@@ -290,7 +300,7 @@ local function calculer()
       end)
     end
   end
-  return ns.calculer(liste), presents, unites
+  return ns.calculer(liste, GetServerTime()), presents, unites
 end
 local function titre(id) return titres[id] or C_QuestLog.GetTitleForQuestID(id) or ("Quête " .. id) end
 
@@ -328,6 +338,7 @@ end
 -- Abandonner aussi : le clic du joueur, confirmé (les objets de la quête sont détruits), et lui seul abandonne la quête
 -- (l'add-on n'abandonne jamais tout seul).
 -- Rendue en avance (#8) : un membre l'a rendue avant que je l'aie finie ; rien à cliquer (je la finis), sans dire qui.
+-- Foyer différent (#9) : « Lie-toi à l'auberge de … » ; rien à cliquer (on se lie chez l'aubergiste).
 local function abandonner(id)
   local avant = C_QuestLog.GetSelectedQuest()
   C_QuestLog.SetSelectedQuest(id)
@@ -367,7 +378,7 @@ local function remplirAFaire(l, ecarts, unites)
       b:GetFontString():SetPoint("LEFT", 8, 0)
       b:GetFontString():SetPoint("RIGHT", -8, 0)
       b:SetScript("OnClick", function(self)
-        if self.x.type == "avance" then return end
+        if self.x.type == "avance" or self.x.type == "foyer" then return end
         if self.x.type == "abandonnee" then
           local p = StaticPopup_Show("COMPAGNIE_ABANDON", titre(self.x.quete))
           if p then p.data = self.x.quete end
@@ -384,6 +395,10 @@ local function remplirAFaire(l, ecarts, unites)
     elseif x.type == "avance" then
       b:SetText("Rendue en avance : " .. titre(x.quete))
       b:Disable()
+    elseif x.type == "foyer" then
+      local voyelle = x.auberge:find("^[AEIOUYaeiouy]") or x.auberge:sub(1, 2) == "É"
+      b:SetText("Lie-toi à l'auberge " .. (voyelle and "d'" or "de ") .. x.auberge)
+      b:Disable()
     else
       local auGroupe = false
       for _, guid in ipairs(x.manquants) do auGroupe = auGroupe or unites[guid] ~= nil end
@@ -398,6 +413,34 @@ local function remplirAFaire(l, ecarts, unites)
   return l:GetHeight()
 end
 
+-- La pierre de la Compagnie (#9), en tête du suivi : un bouton qui utilise ma pierre de foyer, son libellé dit l'état de
+-- la pierre de la Compagnie (« Foyer dans 40 min », sans dire à cause de qui ; « Rentrer au foyer » quand toutes sont
+-- prêtes). Le clic utilise ma pierre même si la Compagnie n'est pas prête : l'add-on avertit, il ne bloque pas.
+-- Bouton sécurisé (utiliser un objet) : enfant ou ancré au suivi, il rendrait le suivi intouchable en combat (plus de
+-- hauteur mise à jour) ; il est donc enfant de UIParent, créé et posé sur le suivi hors combat.
+-- ponytail: en combat il ne suit pas le suivi (déplacé, fermé) ; replacé à la sortie du combat.
+local function placerPierre()
+  local f, b = CompagnieSuiviFrame, CompagniePierre
+  if not f or InCombatLockdown() then return end
+  if not b then
+    b = CreateFrame("Button", "CompagniePierre", UIParent, "UIPanelButtonTemplate,SecureActionButtonTemplate")
+    b:SetSize(262, 22)
+    b:SetFrameStrata("MEDIUM") -- au-dessus du suivi (LOW)
+    b:SetAttribute("type", "item")
+    b:SetAttribute("item", "item:" .. PIERRE)
+    b:RegisterForClicks("AnyDown", "AnyUp")
+    b:SetAttribute("useOnKeyDown", GetCVarBool("ActionButtonUseKeyDown"))
+  end
+  b:SetShown(f:IsShown())
+  if not f:IsShown() then return end
+  b:ClearAllPoints()
+  b:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", f:GetLeft() + 14, f:GetTop() - 40)
+end
+local function duree(s)
+  local m = math.ceil(s / 60)
+  return m < 60 and m .. " min" or ("%d h %02d"):format(math.floor(m / 60), m % 60)
+end
+
 local function dessinerSuivi(calc, presents, unites)
   local f = CompagnieSuiviFrame
   if not (f and f:IsShown() and e.db.compagnie) then return end
@@ -408,7 +451,9 @@ local function dessinerSuivi(calc, presents, unites)
   CompagnieSuiviZone:SetWidth(CompagnieSuiviZone:GetFontString():GetStringWidth() + 22)
   local h = CompagnieSuiviQuetes:GetStringHeight()
   CompagnieSuiviQuetes:GetParent():SetHeight(math.max(1, h))
-  f:SetHeight(math.min(104 + hAFaire + h, UIParent:GetHeight() * 0.6))
+  f:SetHeight(math.min(134 + hAFaire + h, UIParent:GetHeight() * 0.6))
+  placerPierre()
+  if CompagniePierre then CompagniePierre:SetText(calc.pierre > 0 and "Foyer dans " .. duree(calc.pierre) or "Rentrer au foyer") end
 end
 
 -- La petite liste À faire, mode Compagnie éteint : montrée quand j'ai quelque chose à faire. Sa croix la ferme jusqu'à
@@ -416,7 +461,7 @@ end
 local fermeeSur
 local function signature(ecarts)
   local t = {}
-  for i, x in ipairs(ecarts) do t[i] = x.type .. x.quete end
+  for i, x in ipairs(ecarts) do t[i] = x.type .. (x.quete or x.auberge) end
   return table.concat(t, ",")
 end
 local function dessinerPetiteListe()
@@ -488,8 +533,8 @@ local function ouvrirSuivi()
     f:ClearAllPoints()
     f:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", -40, -260) -- sous la minicarte
     f:SetFrameStrata("LOW")
-    titreDePartie(f, "À faire", -40)
-    local aFaire = listeAFaire(f, "CompagnieSuiviAFaire", -60)
+    titreDePartie(f, "À faire", -70) -- au-dessus : la pierre de la Compagnie (placerPierre)
+    local aFaire = listeAFaire(f, "CompagnieSuiviAFaire", -90)
     -- Le filtre par zone : le titre de la partie Quêtes est la zone affichée ; un clic ouvre juste dessous la liste des
     -- zones de la Compagnie (avec leur nombre de quêtes), un clic en choisit une et la liste se ferme.
     local z = CreateFrame("Button", "CompagnieSuiviZone", f)
@@ -568,7 +613,10 @@ local function ouvrirSuivi()
     q:SetWidth(244)
     q:SetJustifyH("LEFT")
     -- Fermée par sa croix (pas quand l'interface entière est cachée, Alt-Z : elle reste « montrée ») : mode éteint.
+    f:HookScript("OnShow", placerPierre)
+    f:HookScript("OnDragStop", placerPierre)
     f:HookScript("OnHide", function(self)
+      placerPierre()
       if masquageInterne or self:IsShown() then return end
       e.db.modeCompagnie = false
       appliquerMode()
@@ -782,11 +830,13 @@ end
 ---------------------------------------------------------------------------------------------------
 -- Messages d'add-on. Au groupe du jeu : d'un expéditeur que le serveur y nomme (son GUID vient du groupe) ; en
 -- chuchotement : d'un membre, reconnu à son nom « Prénom Nom » donné par le serveur, et seulement pour les états.
-local MONJOURNAL = { QUEST_LOG_UPDATE = true, QUEST_TURNED_IN = true, PLAYER_LEVEL_UP = true, UNIT_QUEST_LOG_CHANGED = true }
+local MONJOURNAL = { QUEST_LOG_UPDATE = true, QUEST_TURNED_IN = true, PLAYER_LEVEL_UP = true, UNIT_QUEST_LOG_CHANGED = true,
+  BAG_UPDATE_COOLDOWN = true, HEARTHSTONE_BOUND = true }
 local cadre = CreateFrame("Frame", "CompagnieMessages")
 for _, ev in ipairs({ "ADDON_LOADED", "PLAYER_ENTERING_WORLD", "CHAT_MSG_ADDON", "GROUP_ROSTER_UPDATE", "QUEST_LOG_UPDATE",
   "QUEST_ACCEPTED", "QUEST_TURNED_IN", "PLAYER_LEVEL_UP", "UNIT_QUEST_LOG_CHANGED", "PLAYER_REGEN_ENABLED", "ZONE_CHANGED_NEW_AREA",
-  "QUEST_PROGRESS", "QUEST_COMPLETE", "QUEST_DETAIL", "QUEST_GREETING", "QUEST_FINISHED" }) do cadre:RegisterEvent(ev) end
+  "QUEST_PROGRESS", "QUEST_COMPLETE", "QUEST_DETAIL", "QUEST_GREETING", "QUEST_FINISHED", "BAG_UPDATE_COOLDOWN",
+  "HEARTHSTONE_BOUND" }) do cadre:RegisterEvent(ev) end
 cadre:SetScript("OnEvent", function(_, ev, a1, texte, canal, expediteur)
   if ev == "ADDON_LOADED" then
     if a1 == "Compagnie" then
@@ -806,6 +856,7 @@ cadre:SetScript("OnEvent", function(_, ev, a1, texte, canal, expediteur)
     redessiner()
   elseif ev == "PLAYER_REGEN_ENABLED" then
     if differe and ObjectiveTrackerFrame then appliquerSuiviDuJeu(ObjectiveTrackerFrame) end
+    placerPierre()
   elseif ev == "QUEST_PROGRESS" or ev == "QUEST_COMPLETE" then
     remise = GetQuestID()
     majBandeau()
@@ -817,6 +868,8 @@ cadre:SetScript("OnEvent", function(_, ev, a1, texte, canal, expediteur)
     local id = type(texte) == "number" and texte or a1
     if e.db.abandonnees and id then e.db.abandonnees[id] = nil end
   elseif MONJOURNAL[ev] then
+    -- Ma liaison (#9) : notée avec l'heure serveur, vue par le jeu (rien n'est deviné d'une liaison faite add-on éteint).
+    if ev == "HEARTHSTONE_BOUND" then e.db.foyer = { auberge = GetBindLocation(), date = GetServerTime() } end
     if e.db.compagnie then ns.signaler(e, false, envoi); redessinerBientot() end
   elseif a1 == PREFIXE and type(texte) == "string" and type(expediteur) == "string" then
     local nom = AC.Destinataire(expediteur)
