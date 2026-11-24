@@ -824,3 +824,78 @@ test("abandonner par le journal du jeu : noté, mon état le porte ; sans Compag
     end)
     abandons = 0
 end)
+
+---------------------------------------------------------------------------------------------------
+-- Remise trop tôt (#8) : le bandeau sous la fenêtre de remise du jeu, et la quête en avance.
+
+-- Deux cadres se recouvrent-ils ?
+local function recouvre(a, b)
+    return a:GetLeft() < b:GetRight() and b:GetLeft() < a:GetRight() and a:GetBottom() < b:GetTop() and b:GetBottom() < a:GetTop()
+end
+
+test("remise : le bandeau s'affiche quand l'avancement commun n'est pas complet, pas quand la quête est À rendre ; le bouton du jeu n'est pas touché", function()
+    local garde = GetQuestID
+    GetQuestID = function() return 1001 end
+    local ok, err = pcall(function()
+        avecGroupe({}, false, function()
+            avecJournal({ pattes(8) }, function()
+                fabriquer({ guid = LEO, nom = "Léo Lame" })
+                CompagnieDB.etats = { [LEO] = { niveau = 10, rendues = {}, quetes = {
+                    [1001] = { finie = false, objectifs = { { fait = 5, total = 8 } } } } } }
+                charger()
+                ShowUIPanel(QuestFrame)
+                QuestFrameRewardPanel:Show()
+                local bouton = QuestFrameCompleteQuestButton
+                local actif = bouton:IsEnabled()
+                evenement("QUEST_COMPLETE")
+                assertTrue(CompagnieBandeau and CompagnieBandeau:IsVisible(), "le bandeau s'affiche")
+                assertEquals("La Compagnie n'a pas fini : 5/8", CompagnieBandeauTexte:GetText())
+                -- Le bouton de remise du jeu : ni masqué, ni désactivé, ni recouvert (le bandeau est hors de la fenêtre).
+                assertTrue(bouton:IsVisible(), "bouton du jeu visible")
+                assertEquals(actif, bouton:IsEnabled(), "bouton du jeu ni activé ni désactivé")
+                assertTrue(not recouvre(CompagnieBandeau, bouton), "bandeau hors du bouton")
+                assertTrue(not recouvre(CompagnieBandeau, QuestFrame), "bandeau hors de la fenêtre du jeu")
+                -- Léo a fini : la quête est À rendre, plus de bandeau (aussi par la page de progression).
+                chuchote("E;essai;1/1/1;10#1001:1:8/8###")
+                assertTrue(not CompagnieBandeau:IsShown(), "À rendre : pas de bandeau")
+                evenement("QUEST_PROGRESS")
+                assertTrue(not CompagnieBandeau:IsShown(), "À rendre, page de progression : pas de bandeau")
+                -- Léo retombe à 5/8 (autre envoi) ; la fenêtre se ferme : le bandeau part avec elle.
+                chuchote("E;essai;2/1/1;10#1001:0:5/8###")
+                evenement("QUEST_PROGRESS")
+                assertTrue(CompagnieBandeau:IsShown(), "progression : bandeau")
+                evenement("QUEST_FINISHED")
+                HideUIPanel(QuestFrame)
+                assertTrue(not CompagnieBandeau:IsShown(), "fenêtre fermée : plus de bandeau")
+            end)
+        end)
+    end)
+    GetQuestID = garde
+    eteindre()
+    if not ok then error(err, 0) end
+end)
+
+test("quête en avance : Léo a rendu les pattes pendant que j'en suis à 5/8, l'écart le dit chez moi sans le nommer", function()
+    avecGroupe({}, false, function()
+        avecJournal({ pattes(5) }, function()
+            fabriquer({ guid = LEO, nom = "Léo Lame" })
+            CompagnieDB.modeCompagnie = nil
+            CompagnieDB.etats = { [LEO] = { niveau = 10, rendues = {}, quetes = {
+                [1001] = { finie = true, objectifs = { { fait = 8, total = 8 } } } } } }
+            charger()
+            assertNil(bouton("CompagnieSuiviAFaire1"), "pas encore d'écart")
+            chuchote("E;essai;1/1/1;10##1001##") -- Léo l'a rendue
+            local b = bouton("CompagnieSuiviAFaire1")
+            assertEquals("Rendue en avance : Les pattes de loup", b and b:GetText())
+            assertTrue(not contient(b:GetText(), "Léo"), "personne n'est nommé")
+            assertTrue(not b:IsEnabled(), "rien à cliquer : je la finis")
+            assertTrue(contient(suivi(), "Patte de loup : 5/8"), suivi())
+        end)
+        avecJournal({ pattes(8) }, function()
+            evenement("GROUP_ROSTER_UPDATE")
+            assertNil(bouton("CompagnieSuiviAFaire1"), "finie : résorbée")
+            assertTrue(contient(suivi(), "À rendre"), suivi())
+        end)
+    end)
+    eteindre()
+end)

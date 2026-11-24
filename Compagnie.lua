@@ -327,6 +327,7 @@ end
 -- Partager : actif quand un membre qui n'a pas la quête est dans mon groupe du jeu (le jeu ne partage qu'au groupe).
 -- Abandonner aussi : le clic du joueur, confirmé (les objets de la quête sont détruits), et lui seul abandonne la quête
 -- (l'add-on n'abandonne jamais tout seul).
+-- Rendue en avance (#8) : un membre l'a rendue avant que je l'aie finie ; rien à cliquer (je la finis), sans dire qui.
 local function abandonner(id)
   local avant = C_QuestLog.GetSelectedQuest()
   C_QuestLog.SetSelectedQuest(id)
@@ -366,6 +367,7 @@ local function remplirAFaire(l, ecarts, unites)
       b:GetFontString():SetPoint("LEFT", 8, 0)
       b:GetFontString():SetPoint("RIGHT", -8, 0)
       b:SetScript("OnClick", function(self)
+        if self.x.type == "avance" then return end
         if self.x.type == "abandonnee" then
           local p = StaticPopup_Show("COMPAGNIE_ABANDON", titre(self.x.quete))
           if p then p.data = self.x.quete end
@@ -379,6 +381,9 @@ local function remplirAFaire(l, ecarts, unites)
     if x.type == "abandonnee" then
       b:SetText("Abandonner aussi : " .. titre(x.quete))
       b:Enable()
+    elseif x.type == "avance" then
+      b:SetText("Rendue en avance : " .. titre(x.quete))
+      b:Disable()
     else
       local auGroupe = false
       for _, guid in ipairs(x.manquants) do auGroupe = auGroupe or unites[guid] ~= nil end
@@ -440,6 +445,32 @@ local function dessinerPetiteListe()
   fermeeSur = nil
   f:Show()
   f:SetHeight(52 + remplirAFaire(CompagniePetiteListe, ecarts, unites))
+end
+
+-- La fenêtre de remise (#8) : quand je vais rendre une quête (QUEST_PROGRESS, QUEST_COMPLETE) dont l'avancement commun
+-- n'est pas complet, un bandeau collé sous la fenêtre du jeu le dit (« La Compagnie n'a pas fini : 5/8 »). La fenêtre
+-- du jeu et son bouton ne sont jamais touchés (ni masqués, ni désactivés, ni recouverts) : on peut rendre quand même.
+local remise -- l'idQuête de la fenêtre de remise ouverte (GetQuestID), ou nil
+local function majBandeau()
+  local b = CompagnieBandeau
+  local q = remise and e.db.compagnie and calculer().quetes[remise]
+  if not q or q.aRendre then if b then b:Hide() end return end
+  if not b then
+    b = CreateFrame("Frame", "CompagnieBandeau", QuestFrame, "BackdropTemplate") -- enfant : caché avec la fenêtre
+    b:SetPoint("TOPLEFT", QuestFrame, "BOTTOMLEFT", 0, -4)
+    b:SetPoint("TOPRIGHT", QuestFrame, "BOTTOMRIGHT", 0, -4)
+    b:SetHeight(30)
+    b:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
+    b:SetBackdropColor(0.25, 0.05, 0.05, 0.95)
+    b:SetBackdropBorderColor(1, 0.3, 0.2, 0.8)
+    b.texte = b:CreateFontString("CompagnieBandeauTexte", "OVERLAY", "GameFontNormal")
+    b.texte:SetPoint("LEFT", 10, 0)
+    b.texte:SetPoint("RIGHT", -10, 0)
+  end
+  local comptes = {}
+  for _, o in ipairs(q.objectifs) do comptes[#comptes + 1] = o.fait .. "/" .. o.total end
+  b.texte:SetText("La Compagnie n'a pas fini" .. (#comptes > 0 and " : " .. table.concat(comptes, ", ") or "."))
+  b:Show()
 end
 
 local function titreDePartie(f, texte, y)
@@ -681,6 +712,7 @@ function redessiner()
   if CompagnieFrame and CompagnieFrame:IsShown() then dessiner() end
   dessinerSuivi()
   dessinerPetiteListe()
+  if remise then majBandeau() end
 end
 -- Mon journal change par rafales (QUEST_LOG_UPDATE) : le suivi est redessiné une fois par rafale.
 local dessinPrevu = false
@@ -753,7 +785,8 @@ end
 local MONJOURNAL = { QUEST_LOG_UPDATE = true, QUEST_TURNED_IN = true, PLAYER_LEVEL_UP = true, UNIT_QUEST_LOG_CHANGED = true }
 local cadre = CreateFrame("Frame", "CompagnieMessages")
 for _, ev in ipairs({ "ADDON_LOADED", "PLAYER_ENTERING_WORLD", "CHAT_MSG_ADDON", "GROUP_ROSTER_UPDATE", "QUEST_LOG_UPDATE",
-  "QUEST_ACCEPTED", "QUEST_TURNED_IN", "PLAYER_LEVEL_UP", "UNIT_QUEST_LOG_CHANGED", "PLAYER_REGEN_ENABLED", "ZONE_CHANGED_NEW_AREA" }) do cadre:RegisterEvent(ev) end
+  "QUEST_ACCEPTED", "QUEST_TURNED_IN", "PLAYER_LEVEL_UP", "UNIT_QUEST_LOG_CHANGED", "PLAYER_REGEN_ENABLED", "ZONE_CHANGED_NEW_AREA",
+  "QUEST_PROGRESS", "QUEST_COMPLETE", "QUEST_DETAIL", "QUEST_GREETING", "QUEST_FINISHED" }) do cadre:RegisterEvent(ev) end
 cadre:SetScript("OnEvent", function(_, ev, a1, texte, canal, expediteur)
   if ev == "ADDON_LOADED" then
     if a1 == "Compagnie" then
@@ -773,6 +806,12 @@ cadre:SetScript("OnEvent", function(_, ev, a1, texte, canal, expediteur)
     redessiner()
   elseif ev == "PLAYER_REGEN_ENABLED" then
     if differe and ObjectiveTrackerFrame then appliquerSuiviDuJeu(ObjectiveTrackerFrame) end
+  elseif ev == "QUEST_PROGRESS" or ev == "QUEST_COMPLETE" then
+    remise = GetQuestID()
+    majBandeau()
+  elseif ev == "QUEST_DETAIL" or ev == "QUEST_GREETING" or ev == "QUEST_FINISHED" then
+    remise = nil
+    majBandeau()
   elseif ev == "QUEST_ACCEPTED" then
     -- Forever : (questID) ; d'autres clients Classic : (index, questID).
     local id = type(texte) == "number" and texte or a1

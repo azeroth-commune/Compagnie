@@ -20,11 +20,13 @@ with the shared progress: a quest is ready to turn in only when everyone is done
 - **La liste À faire** : « Partager » une quête que tu as et qu'un membre n'a pas ; « Abandonner aussi » une quête
   qu'un membre a abandonnée (abandonner, c'est dire « la Compagnie ne fait pas celle-là »). Un bouton chacun : l'add-on
   n'abandonne jamais rien tout seul. Mode Compagnie éteint, une petite liste À faire reste à l'écran.
+- **Rendre trop tôt ?** Quand tu vas rendre une quête que la Compagnie n'a pas finie, un bandeau sous la fenêtre du jeu
+  le dit (« La Compagnie n'a pas fini : 5/8 ») ; le bouton du jeu reste tel quel, tu peux rendre quand même. Les autres
+  voient alors « Rendue en avance » dans leur liste À faire, jusqu'à ce qu'ils l'aient finie.
 
 ### À venir
 
-Dans la liste À faire, la quête à aller prendre soi-même ; l'avertissement quand on rend
-une quête trop tôt, les quêtes personnelles (classe, métier), le foyer commun de la Compagnie. Voir les
+Dans la liste À faire, la quête à aller prendre soi-même ; les quêtes personnelles (classe, métier), le foyer commun de la Compagnie. Voir les
 [issues](https://github.com/azeroth-commune/Compagnie/issues).
 
 ## Installation
