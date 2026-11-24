@@ -1063,3 +1063,40 @@ test("foyer et pierre se dessinent depuis une Compagnie fabriquée, sans nommer 
     eteindre()
     if not ok then error(err, 0) end
 end)
+
+---------------------------------------------------------------------------------------------------
+-- Partager (#22) : le jeu ne partage que dans un clic (OneForAll bloqué depuis un minuteur sur Forever) ; un seul bouton
+-- « Partager », chaque clic partage la suivante.
+
+test("Partager (#22) : un seul bouton, chaque clic partage la suivante ; une quête prise entre-temps est sautée", function()
+    local Q = {}
+    for i = 1, 3 do Q[i] = { id = 2300 + i, titre = "Partage " .. i, partageable = true } end
+    avecJournal(Q, function() -- lignes du journal : 1 en-tête, puis 2, 3, 4
+        fabriquer({ guid = LEO, nom = "Léo Lame" })
+        CompagnieDB.modeCompagnie = nil
+        CompagnieDB.etats = { [LEO] = { niveau = 5, rendues = {}, quetes = {} } }
+        avecLeo(function()
+            charger()
+            local b = bouton("CompagnieSuiviAFaire1")
+            assertEquals("Partager : Partage 1 (+2)", b and b:GetText())
+            assertNil(bouton("CompagnieSuiviAFaire2"), "un seul bouton « Partager »")
+            local n = #pousses
+            b:Click()
+            assertEquals("Partager : Partage 2 (+1)", b:GetText())
+            b:Click()
+            assertEquals("Partager : Partage 3", b:GetText())
+            b:Click()
+            assertEquals(n + 3, #pousses, "trois clics, trois partages")
+            assertEquals("2,3,4", table.concat({ pousses[n + 1], pousses[n + 2], pousses[n + 3] }, ","), "dans l'ordre")
+            -- Tout est parti, Léo n'a encore rien accepté : un nouveau tour. Léo prend Partage 2 entre-temps : sautée.
+            assertEquals("Partager : Partage 1 (+2)", b:GetText())
+            chuchote("E;essai;1/1/1;5#2302:0########")
+            b = bouton("CompagnieSuiviAFaire1")
+            assertEquals("Partager : Partage 1 (+1)", b:GetText())
+            b:Click()
+            b:Click()
+            assertEquals("2,4", pousses[n + 4] .. "," .. pousses[n + 5], "Partage 2 sautée")
+        end)
+    end)
+    eteindre()
+end)

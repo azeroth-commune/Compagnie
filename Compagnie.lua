@@ -405,10 +405,32 @@ StaticPopupDialogs.COMPAGNIE_ABANDON = {
   OnAccept = function(_, id) abandonner(id) end,
   timeout = 0, whileDead = true, hideOnEscape = true,
 }
+-- Mes écarts, ceux où c'est moi qui agis. Les quêtes à partager tiennent dans un seul bouton (#22), à la place de la
+-- première : { type = "partager", liste = { écart, … } }.
 local function mesEcarts(calc)
-  local t = {}
-  for _, x in ipairs(calc.aFaire) do if x.membre == moi() then t[#t + 1] = x end end
+  local t, partager = {}, nil
+  for _, x in ipairs(calc.aFaire) do
+    if x.membre ~= moi() then -- celui d'un autre
+    elseif x.type ~= "partager" then t[#t + 1] = x
+    elseif partager then table.insert(partager.liste, x)
+    else partager = { type = "partager", liste = { x } }; t[#t + 1] = partager end
+  end
   return t
+end
+-- Partager, la suivante à chaque clic (#22) : le jeu ne partage que dans un clic (OneForAll, bloqué depuis un minuteur
+-- sur Forever). La suivante : la première pas encore partagée de ce tour dont un membre qui ne l'a pas est dans mon
+-- groupe (sinon la première pas encore partagée) ; tout est parti : un nouveau tour. Une quête que les autres ont prise
+-- entre-temps n'est plus dans la liste : sautée. Rend l'écart, combien d'autres restent dans ce tour, et si le partage
+-- peut atteindre quelqu'un (le jeu ne partage qu'au groupe).
+local partagees = {} -- [idQuête] = true : partagée d'un clic pendant ce tour ; rien n'est sauvegardé
+local function suivante(liste, unites)
+  local libres = {}
+  for _, x in ipairs(liste) do if not partagees[x.quete] then libres[#libres + 1] = x end end
+  if #libres == 0 then partagees, libres = {}, liste end
+  for _, x in ipairs(libres) do
+    for _, guid in ipairs(x.manquants) do if unites[guid] then return x, #libres - 1, true end end
+  end
+  return libres[1], #libres - 1, false
 end
 -- Une liste de boutons dans parent (le suivi, ou la petite liste), en haut à y ; rend sa hauteur.
 local function listeAFaire(parent, nom, y)
@@ -441,7 +463,7 @@ local function remplirAFaire(l, ecarts, unites)
       b:SetScript("OnClick", function(self, bouton)
         if self.x.type == "avance" or self.x.type == "foyer" then return end
         if bouton == "RightButton" then
-          if self.x.type == "partager" then proposerEcart(self.x.quete) end
+          if self.x.type == "partager" then proposerEcart(self.quete) end
           return
         end
         if self.x.type == "ecartee" then
@@ -449,7 +471,9 @@ local function remplirAFaire(l, ecarts, unites)
           if p then p.data = self.x.quete end
           return
         end
-        QuestLogPushQuest(C_QuestLog.GetLogIndexForQuestID(self.x.quete))
+        QuestLogPushQuest(C_QuestLog.GetLogIndexForQuestID(self.quete))
+        partagees[self.quete] = true
+        redessiner() -- le bouton passe à la suivante
       end)
       l.boutons[i] = b
     end
@@ -465,9 +489,9 @@ local function remplirAFaire(l, ecarts, unites)
       b:SetText("Lie-toi à l'auberge " .. (voyelle and "d'" or "de ") .. x.auberge)
       b:Disable()
     else
-      local auGroupe = false
-      for _, guid in ipairs(x.manquants) do auGroupe = auGroupe or unites[guid] ~= nil end
-      b:SetText((auGroupe and "Partager : " or "Partager en groupe : ") .. titre(x.quete))
+      local q, reste, auGroupe = suivante(x.liste, unites)
+      b.quete = q.quete
+      b:SetText((auGroupe and "Partager : " or "Partager en groupe : ") .. titre(q.quete) .. (reste > 0 and " (+" .. reste .. ")" or ""))
       b:SetEnabled(auGroupe)
     end
     b:Show()
@@ -526,7 +550,11 @@ end
 local fermeeSur
 local function signature(ecarts)
   local t = {}
-  for i, x in ipairs(ecarts) do t[i] = x.type .. (x.quete or x.auberge) end
+  for i, x in ipairs(ecarts) do
+    local ids = {}
+    for k, p in ipairs(x.liste or {}) do ids[k] = p.quete end
+    t[i] = x.type .. (x.quete or x.auberge or table.concat(ids, "+"))
+  end
   return table.concat(t, ",")
 end
 local function dessinerPetiteListe()

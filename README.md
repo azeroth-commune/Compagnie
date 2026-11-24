@@ -19,7 +19,8 @@ with the shared progress: a quest is ready to turn in only when everyone is done
   > Tu as 8/8 pattes de loup, Léo 5/8 et il n'est pas là ce soir : le suivi affiche 5/8. La quête attend Léo.
 
 - **Le suivi par zone** : les quêtes de la zone où tu es, ou d'une zone choisie (clic sur le titre « Quêtes »).
-- **La liste À faire** : « Partager » une quête que tu as et qu'un membre n'a pas ; « Abandonner aussi » une quête
+- **La liste À faire** : « Partager » une quête que tu as et qu'un membre n'a pas (plusieurs : un seul bouton, chaque
+  clic partage la suivante) ; « Abandonner aussi » une quête
   que la Compagnie a écartée. Un bouton chacun : l'add-on n'abandonne jamais rien tout seul. Mode Compagnie éteint, une
   petite liste À faire reste à l'écran.
 - **Écarter une quête** (« la Compagnie ne fait pas celle-là ») : clic sur son titre dans le suivi, ou clic droit sur
