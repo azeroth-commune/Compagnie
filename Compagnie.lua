@@ -325,7 +325,8 @@ end
 
 -- La liste À faire : mes écarts (ceux où c'est moi qui agis), un bouton chacun ; son libellé dit l'action et son état.
 -- Partager : actif quand un membre qui n'a pas la quête est dans mon groupe du jeu (le jeu ne partage qu'au groupe).
--- Abandonner aussi : le clic du joueur, et lui seul, abandonne la quête (l'add-on n'abandonne jamais tout seul).
+-- Abandonner aussi : le clic du joueur, confirmé (les objets de la quête sont détruits), et lui seul abandonne la quête
+-- (l'add-on n'abandonne jamais tout seul).
 local function abandonner(id)
   local avant = C_QuestLog.GetSelectedQuest()
   C_QuestLog.SetSelectedQuest(id)
@@ -333,6 +334,12 @@ local function abandonner(id)
   C_QuestLog.AbandonQuest()
   if avant then C_QuestLog.SetSelectedQuest(avant) end
 end
+StaticPopupDialogs.COMPAGNIE_ABANDON = {
+  text = "Abandonner « %s », comme la Compagnie ? Ses objets de quête seront détruits.",
+  button1 = "Abandonner", button2 = CANCEL or "Annuler",
+  OnAccept = function(_, id) abandonner(id) end,
+  timeout = 0, whileDead = true, hideOnEscape = true,
+}
 local function mesEcarts(calc)
   local t = {}
   for _, x in ipairs(calc.aFaire) do if x.membre == moi() then t[#t + 1] = x end end
@@ -359,7 +366,11 @@ local function remplirAFaire(l, ecarts, unites)
       b:GetFontString():SetPoint("LEFT", 8, 0)
       b:GetFontString():SetPoint("RIGHT", -8, 0)
       b:SetScript("OnClick", function(self)
-        if self.x.type == "abandonnee" then return abandonner(self.x.quete) end
+        if self.x.type == "abandonnee" then
+          local p = StaticPopup_Show("COMPAGNIE_ABANDON", titre(self.x.quete))
+          if p then p.data = self.x.quete end
+          return
+        end
         QuestLogPushQuest(C_QuestLog.GetLogIndexForQuestID(self.x.quete))
       end)
       l.boutons[i] = b
