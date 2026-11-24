@@ -2,9 +2,12 @@
 -- Entrée : la liste des membres, chacun avec son état (dernier état connu pour un absent) :
 --   { nom = "Léo", niveau = 10, absent = true,
 --     quetes = { [idQuête] = { finie = false, objectifs = { { texte = "Patte de loup", fait = 5, total = 8 }, … } } },
---     rendues = { [idQuête] = true } }
---     (une quête peut porter sa zone : zone = "Forêt d'Elwynn")
--- Sortie : { niveau = 9, quetes = { [idQuête] = { objectifs = { … }, aRendre = false, enAttente = { "Léo" }, zone = … } } }
+--     rendues = { [idQuête] = true }, abandonnees = { [idQuête] = true } }
+--     (une quête peut porter sa zone : zone = "Forêt d'Elwynn", et partageable = true : seulement dans mon journal, lu
+--     en direct, le jeu ne le dit que pour mes quêtes)
+-- Sortie : { niveau = 9, quetes = { [idQuête] = { objectifs = { … }, aRendre = false, enAttente = { "Léo" }, zone = … } },
+--           aFaire = { { type = "partager", membre = "Virgile", quete = id, manquants = { "Léo" } },
+--                      { type = "abandonnee", membre = "Léo", quete = id, par = { "Virgile" } } } }
 -- Les quêtes de la Compagnie sont celles qu'au moins un membre a en cours. Pour chacune, membre par membre :
 --   - en cours : son avancement compte, objectif par objectif (le moins avancé l'emporte) ;
 --   - déjà rendue : il ne retient plus la Compagnie ;
@@ -34,7 +37,7 @@ function ns.calculer(membres)
       end
     end
     -- Un objectif absent du journal d'un membre (quête pas encore chargée, ou pas de quête du tout) compte à 0.
-    -- ponytail: sans la quête, un membre compte à 0 ; l'écart « quête à partager » (tranche suivante) dira quoi faire.
+    -- ponytail: sans la quête, un membre compte à 0 ; l'écart (à partager, abandonnée) dit quoi faire.
     for _, m in ipairs(membres) do
       local q = m.quetes and m.quetes[id]
       if q or not (m.rendues and m.rendues[id]) then
@@ -44,5 +47,37 @@ function ns.calculer(membres)
       end
     end
   end
-  return { niveau = niveau, quetes = quetes }
+  return { niveau = niveau, quetes = quetes, aFaire = ns.ecarts(membres) }
+end
+
+-- La liste À faire : les écarts, chacun avec le membre visé (celui qui agit) et l'action ; triée par quête.
+--   - quête abandonnée : un membre l'a abandonnée (« la Compagnie ne fait pas celle-là »), un autre l'a encore : chez
+--     celui-ci, « Abandonner aussi » ; résorbée quand plus personne ne l'a ;
+--   - quête à partager : un membre l'a, partageable, d'autres ne l'ont ni en cours, ni rendue : chez lui, « Partager » ;
+--     résorbée quand tous l'ont. Une quête abandonnée par un membre n'est jamais à partager.
+function ns.ecarts(membres)
+  local t, abandons = {}, {}
+  for _, m in ipairs(membres) do
+    for id in pairs(m.abandonnees or {}) do abandons[id] = abandons[id] or {}; table.insert(abandons[id], m.nom) end
+  end
+  for _, m in ipairs(membres) do
+    for id, q in pairs(m.quetes or {}) do
+      local par = {}
+      for _, nom in ipairs(abandons[id] or {}) do if nom ~= m.nom then par[#par + 1] = nom end end
+      if #par > 0 then t[#t + 1] = { type = "abandonnee", membre = m.nom, quete = id, par = par }
+      elseif q.partageable and not abandons[id] then
+        local manquants = {}
+        for _, n in ipairs(membres) do
+          if not (n.quetes and n.quetes[id] or n.rendues and n.rendues[id]) then manquants[#manquants + 1] = n.nom end
+        end
+        if #manquants > 0 then t[#t + 1] = { type = "partager", membre = m.nom, quete = id, manquants = manquants } end
+      end
+    end
+  end
+  table.sort(t, function(a, b)
+    if a.quete ~= b.quete then return a.quete < b.quete end
+    if a.type ~= b.type then return a.type < b.type end
+    return tostring(a.membre) < tostring(b.membre)
+  end)
+  return t
 end
