@@ -17,10 +17,13 @@ with the shared progress: a quest is ready to turn in only when everyone is done
   > Tu as 8/8 pattes de loup, Léo 5/8 et il n'est pas là ce soir : le suivi affiche 5/8. La quête attend Léo.
 
 - **Le suivi par zone** : les quêtes de la zone où tu es, ou d'une zone choisie (clic sur le titre « Quêtes »).
+- **La liste À faire** : « Partager » une quête que tu as et qu'un membre n'a pas ; « Abandonner aussi » une quête
+  qu'un membre a abandonnée (abandonner, c'est dire « la Compagnie ne fait pas celle-là »). Un bouton chacun : l'add-on
+  n'abandonne jamais rien tout seul. Mode Compagnie éteint, une petite liste À faire reste à l'écran.
 
 ### À venir
 
-La liste **À faire** (quête à partager, quête abandonnée, quête à aller prendre soi-même), l'avertissement quand on rend
+Dans la liste À faire, la quête à aller prendre soi-même ; l'avertissement quand on rend
 une quête trop tôt, les quêtes personnelles (classe, métier), le foyer commun de la Compagnie. Voir les
 [issues](https://github.com/azeroth-commune/Compagnie/issues).
 

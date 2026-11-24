@@ -136,18 +136,20 @@ local function monEtat()
       end
       local finie = C_QuestLog.IsComplete(id)
       if type(finie) ~= "boolean" then finie = toutFini end
-      quetes[id] = { finie = finie, objectifs = objectifs, zone = zone }
+      quetes[id] = { finie = finie, objectifs = objectifs, zone = zone, partageable = C_QuestLog.IsPushableQuest(id) == true }
       titres[id] = info.title
     end
   end
-  -- Rendues : parmi les quêtes des autres membres, celles que j'ai déjà rendues (pas tout l'historique : il ne tient
-  -- pas dans un message).
+  -- Rendues et abandonnées : parmi les quêtes des autres membres, celles que j'ai déjà rendues ou abandonnées (pas tout
+  -- l'historique : il ne tient pas dans un message).
+  local abandonnees, mesAbandons = {}, e.db.abandonnees or {}
   for _, etat in pairs(e.db.etats or {}) do
     for id in pairs(etat.quetes or {}) do
       if not quetes[id] and C_QuestLog.IsQuestFlaggedCompleted(id) then rendues[id] = true end
+      if mesAbandons[id] then abandonnees[id] = true end
     end
   end
-  return { niveau = UnitLevel("player"), quetes = quetes, rendues = rendues }
+  return { niveau = UnitLevel("player"), quetes = quetes, rendues = rendues, abandonnees = abandonnees }
 end
 
 ---------------------------------------------------------------------------------------------------
@@ -199,7 +201,8 @@ local envoi = {
   envoyerEtat = function(texte) return diffuser(texte) end,
 }
 local reception = {
-  maj = function() redessiner() end,
+  -- Un état reçu : mes rendues et abandonnées suivent les quêtes des autres, mon état repart s'il a changé.
+  maj = function() redessiner(); ns.signaler(e, false, envoi) end,
   demande = function() ns.signaler(e, true, envoi) end,
   maintenant = GetTime,
 }
@@ -223,10 +226,11 @@ local filtrer = (ChatFrameUtil and ChatFrameUtil.AddMessageEventFilter) or ChatF
 if filtrer then filtrer("CHAT_MSG_SYSTEM", horsLigne) end
 
 ---------------------------------------------------------------------------------------------------
--- Le suivi du mode Compagnie : une fenêtre du socle en deux parties, À faire en haut (vide jusqu'à la tranche
--- suivante), les quêtes de la Compagnie en dessous, avec leur avancement commun. Personne n'est nommé, sauf un absent qui
--- manque (« En attente de Léo ») : jamais qui est en retard ni en avance.
+-- Le suivi du mode Compagnie : une fenêtre du socle en deux parties, À faire en haut, les quêtes de la Compagnie en
+-- dessous, avec leur avancement commun. Personne n'est nommé, sauf un absent qui manque (« En attente de Léo ») : jamais
+-- qui est en retard ni en avance. Mode éteint, une petite liste À faire reste à l'écran tant qu'il y a quelque chose à faire.
 local masquageInterne = false
+local function modeActif() return e.db.compagnie ~= nil and e.db.modeCompagnie ~= false end
 local appliquerMode -- plus bas
 
 local function prenom(guid)
@@ -269,8 +273,8 @@ local function choixDeZone()
   return choix
 end
 
--- Le texte des quêtes de la Compagnie, calculé depuis mon journal et les derniers états connus.
-local function texteSuivi()
+-- Le calcul de la Compagnie depuis mon journal et les derniers états connus (corrigés par le jeu pour mon groupe).
+local function calculer()
   local presents, unites = presence()
   local liste = ns.membresDuCalcul(e.db, moi(), monEtat(), presents)
   local ids = {}
@@ -286,8 +290,13 @@ local function texteSuivi()
       end)
     end
   end
-  local calc, ordre, lignes = ns.calculer(liste), {}, {}
-  local function titre(id) return titres[id] or C_QuestLog.GetTitleForQuestID(id) or ("Quête " .. id) end
+  return ns.calculer(liste), presents, unites
+end
+local function titre(id) return titres[id] or C_QuestLog.GetTitleForQuestID(id) or ("Quête " .. id) end
+
+-- Le texte des quêtes de la Compagnie.
+local function texteSuivi(calc, presents)
+  local ordre, lignes = {}, {}
   local voir = zoneAffichee()
   comptes = { [true] = 0 }
   for id, q in pairs(calc.quetes) do
@@ -314,15 +323,112 @@ local function texteSuivi()
   return voir and "|cff999999Aucune quête de la Compagnie dans cette zone.|r" or "|cff999999Aucune quête en cours.|r"
 end
 
-local function dessinerSuivi()
+-- La liste À faire : mes écarts (ceux où c'est moi qui agis), un bouton chacun ; son libellé dit l'action et son état.
+-- Partager : actif quand un membre qui n'a pas la quête est dans mon groupe du jeu (le jeu ne partage qu'au groupe).
+-- Abandonner aussi : le clic du joueur, et lui seul, abandonne la quête (l'add-on n'abandonne jamais tout seul).
+local function abandonner(id)
+  local avant = C_QuestLog.GetSelectedQuest()
+  C_QuestLog.SetSelectedQuest(id)
+  C_QuestLog.SetAbandonQuest()
+  C_QuestLog.AbandonQuest()
+  if avant then C_QuestLog.SetSelectedQuest(avant) end
+end
+local function mesEcarts(calc)
+  local t = {}
+  for _, x in ipairs(calc.aFaire) do if x.membre == moi() then t[#t + 1] = x end end
+  return t
+end
+-- Une liste de boutons dans parent (le suivi, ou la petite liste), en haut à y ; rend sa hauteur.
+local function listeAFaire(parent, nom, y)
+  local l = CreateFrame("Frame", nom, parent)
+  l:SetPoint("TOPLEFT", 14, y)
+  l:SetSize(262, 16)
+  l.vide = l:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+  l.vide:SetPoint("TOPLEFT")
+  l.vide:SetText("Rien à faire.")
+  l.boutons = {}
+  return l
+end
+local function remplirAFaire(l, ecarts, unites)
+  for i, x in ipairs(ecarts) do
+    local b = l.boutons[i]
+    if not b then
+      b = CreateFrame("Button", l:GetName() .. i, l, "UIPanelButtonTemplate")
+      b:SetSize(262, 22)
+      b:SetPoint("TOPLEFT", 0, -(i - 1) * 24)
+      b:GetFontString():SetPoint("LEFT", 8, 0)
+      b:GetFontString():SetPoint("RIGHT", -8, 0)
+      b:SetScript("OnClick", function(self)
+        if self.x.type == "abandonnee" then return abandonner(self.x.quete) end
+        QuestLogPushQuest(C_QuestLog.GetLogIndexForQuestID(self.x.quete))
+      end)
+      l.boutons[i] = b
+    end
+    b.x = x
+    if x.type == "abandonnee" then
+      b:SetText("Abandonner aussi : " .. titre(x.quete))
+      b:Enable()
+    else
+      local auGroupe = false
+      for _, guid in ipairs(x.manquants) do auGroupe = auGroupe or unites[guid] ~= nil end
+      b:SetText((auGroupe and "Partager : " or "Partager en groupe : ") .. titre(x.quete))
+      b:SetEnabled(auGroupe)
+    end
+    b:Show()
+  end
+  for i = #ecarts + 1, #l.boutons do l.boutons[i]:Hide() end
+  l.vide:SetShown(#ecarts == 0)
+  l:SetHeight(#ecarts == 0 and 16 or #ecarts * 24)
+  return l:GetHeight()
+end
+
+local function dessinerSuivi(calc, presents, unites)
   local f = CompagnieSuiviFrame
   if not (f and f:IsShown() and e.db.compagnie) then return end
-  CompagnieSuiviQuetes:SetText(texteSuivi())
+  if not calc then calc, presents, unites = calculer() end
+  local hAFaire = remplirAFaire(CompagnieSuiviAFaire, mesEcarts(calc), unites)
+  CompagnieSuiviQuetes:SetText(texteSuivi(calc, presents))
   CompagnieSuiviZone:SetText(libelleZone())
   CompagnieSuiviZone:SetWidth(CompagnieSuiviZone:GetFontString():GetStringWidth() + 22)
   local h = CompagnieSuiviQuetes:GetStringHeight()
   CompagnieSuiviQuetes:GetParent():SetHeight(math.max(1, h))
-  f:SetHeight(math.min(110 + h, UIParent:GetHeight() * 0.6))
+  f:SetHeight(math.min(104 + hAFaire + h, UIParent:GetHeight() * 0.6))
+end
+
+-- La petite liste À faire, mode Compagnie éteint : montrée quand j'ai quelque chose à faire. Sa croix la ferme jusqu'à
+-- ce que la liste change (un nouvel écart, ou un écart résorbé).
+local fermeeSur
+local function signature(ecarts)
+  local t = {}
+  for i, x in ipairs(ecarts) do t[i] = x.type .. x.quete end
+  return table.concat(t, ",")
+end
+local function dessinerPetiteListe()
+  local f = CompagnieAFaireFrame
+  if not e.db.compagnie or modeActif() then
+    if f then masquageInterne = true; f:Hide(); masquageInterne = false end
+    return
+  end
+  local calc, _, unites = calculer()
+  local ecarts = mesEcarts(calc)
+  if #ecarts == 0 or signature(ecarts) == fermeeSur then
+    if f then masquageInterne = true; f:Hide(); masquageInterne = false end
+    return
+  end
+  if not f then
+    f = AC.Fenetre("CompagnieAFaireFrame", "À faire", 290, 80)
+    for i, n in ipairs(UISpecialFrames) do if n == "CompagnieAFaireFrame" then table.remove(UISpecialFrames, i) break end end
+    f:ClearAllPoints()
+    f:SetPoint("TOPRIGHT", Minimap, "TOPLEFT", -12, -20) -- à gauche de la minicarte : le suivi du jeu est dessous
+    f:SetFrameStrata("LOW")
+    listeAFaire(f, "CompagniePetiteListe", -40)
+    f:HookScript("OnHide", function(self)
+      if not masquageInterne and not self:IsShown() then fermeeSur = signature(mesEcarts(calculer())) end
+    end)
+  end
+  fermeeSur = nil
+  f:Show()
+  f:SetHeight(52 + remplirAFaire(CompagniePetiteListe, ecarts, unites))
 end
 
 local function titreDePartie(f, texte, y)
@@ -341,10 +447,11 @@ local function ouvrirSuivi()
     f:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", -40, -260) -- sous la minicarte
     f:SetFrameStrata("LOW")
     titreDePartie(f, "À faire", -40)
+    local aFaire = listeAFaire(f, "CompagnieSuiviAFaire", -60)
     -- Le filtre par zone : le titre de la partie Quêtes est la zone affichée ; un clic ouvre juste dessous la liste des
     -- zones de la Compagnie (avec leur nombre de quêtes), un clic en choisit une et la liste se ferme.
     local z = CreateFrame("Button", "CompagnieSuiviZone", f)
-    z:SetPoint("TOPLEFT", 14, -68)
+    z:SetPoint("TOPLEFT", aFaire, "BOTTOMLEFT", 0, -8)
     z:SetHeight(20)
     z:SetNormalFontObject("GameFontNormal")
     z:SetHighlightFontObject("GameFontHighlight")
@@ -409,7 +516,7 @@ local function ouvrirSuivi()
     end)
     -- Beaucoup de quêtes : la fenêtre s'arrête à 60 % de l'écran et les quêtes défilent (molette).
     local defil = CreateFrame("ScrollFrame", "CompagnieSuiviDefil", f, "UIPanelScrollFrameTemplate")
-    defil:SetPoint("TOPLEFT", 14, -92)
+    defil:SetPoint("TOPLEFT", z, "BOTTOMLEFT", 0, -4)
     defil:SetPoint("BOTTOMRIGHT", -32, 12)
     local contenu = CreateFrame("Frame", nil, defil)
     contenu:SetSize(244, 1)
@@ -475,7 +582,6 @@ local function suiviQuestieActif()
   return f and f.IsShown and f:IsShown() or false
 end
 
-local function modeActif() return e.db.compagnie ~= nil and e.db.modeCompagnie ~= false end
 function appliquerMode()
   local actif = modeActif()
   masquerSuiviDuJeu(actif)
@@ -491,6 +597,7 @@ function appliquerMode()
     CompagnieSuiviFrame:Hide()
     masquageInterne = false
   end
+  dessinerPetiteListe()
 end
 
 local function basculerMode()
@@ -562,6 +669,7 @@ end
 function redessiner()
   if CompagnieFrame and CompagnieFrame:IsShown() then dessiner() end
   dessinerSuivi()
+  dessinerPetiteListe()
 end
 -- Mon journal change par rafales (QUEST_LOG_UPDATE) : le suivi est redessiné une fois par rafale.
 local dessinPrevu = false
@@ -573,7 +681,7 @@ end
 
 -- La Compagnie a changé : le mode suit, et mon état part (forcé : de nouveaux membres ne l'ont pas).
 function ns.majCompagnie()
-  if not e.db.compagnie then e.db.etats = nil end -- plus de Compagnie : les derniers états connus sont oubliés
+  if not e.db.compagnie then e.db.etats, e.db.abandonnees = nil, nil end -- plus de Compagnie : derniers états et abandons oubliés
   appliquerMode()
   redessiner()
   ns.signaler(e, true, envoi)
@@ -608,19 +716,40 @@ local function veiller()
   C_Timer.After(VEILLE, veiller)
 end
 
+-- Mes abandons (#5) : une quête que j'abandonne (par le journal du jeu, ou « Abandonner aussi ») est notée dans
+-- CompagnieDB.abandonnees : abandonner, c'est dire « la Compagnie ne fait pas celle-là ». Noté au clic du joueur (le jeu
+-- appelle C_QuestLog.SetAbandonQuest puis AbandonQuest), rien n'est deviné ; oublié quand je la reprends (QUEST_ACCEPTED).
+-- Accroché une fois, au chargement (ADDON_LOADED).
+local aAbandonner, abandonsAccroches
+local function accrocherAbandons()
+  if abandonsAccroches or not C_QuestLog.AbandonQuest then return end -- ponytail: le simulateur n'a pas ces fonctions
+  abandonsAccroches = true
+  hooksecurefunc(C_QuestLog, "SetAbandonQuest", function() aAbandonner = C_QuestLog.GetAbandonQuest() end)
+  hooksecurefunc(C_QuestLog, "AbandonQuest", function()
+    local id = aAbandonner
+    aAbandonner = nil
+    if not (e.db.compagnie and type(id) == "number" and id > 0) then return end
+    e.db.abandonnees = e.db.abandonnees or {}
+    e.db.abandonnees[id] = true
+    ns.signaler(e, false, envoi)
+    redessinerBientot()
+  end)
+end
+
 ---------------------------------------------------------------------------------------------------
 -- Messages d'add-on. Au groupe du jeu : d'un expéditeur que le serveur y nomme (son GUID vient du groupe) ; en
 -- chuchotement : d'un membre, reconnu à son nom « Prénom Nom » donné par le serveur, et seulement pour les états.
 local MONJOURNAL = { QUEST_LOG_UPDATE = true, QUEST_TURNED_IN = true, PLAYER_LEVEL_UP = true, UNIT_QUEST_LOG_CHANGED = true }
 local cadre = CreateFrame("Frame", "CompagnieMessages")
 for _, ev in ipairs({ "ADDON_LOADED", "PLAYER_ENTERING_WORLD", "CHAT_MSG_ADDON", "GROUP_ROSTER_UPDATE", "QUEST_LOG_UPDATE",
-  "QUEST_TURNED_IN", "PLAYER_LEVEL_UP", "UNIT_QUEST_LOG_CHANGED", "PLAYER_REGEN_ENABLED", "ZONE_CHANGED_NEW_AREA" }) do cadre:RegisterEvent(ev) end
+  "QUEST_ACCEPTED", "QUEST_TURNED_IN", "PLAYER_LEVEL_UP", "UNIT_QUEST_LOG_CHANGED", "PLAYER_REGEN_ENABLED", "ZONE_CHANGED_NEW_AREA" }) do cadre:RegisterEvent(ev) end
 cadre:SetScript("OnEvent", function(_, ev, a1, texte, canal, expediteur)
   if ev == "ADDON_LOADED" then
     if a1 == "Compagnie" then
       CompagnieDB = CompagnieDB or {}
       e.db, e.moi = CompagnieDB, moi()
       connectes, chuchotes = {}, {} -- la présence repart de zéro (en jeu, un /reload efface tout l'état Lua)
+      accrocherAbandons()
       -- Pas de fenêtre ici : à ADDON_LOADED, les add-ons chargés après nous (Diagnostic, qui donne sa loupe aux
       -- fenêtres du socle) ne le sont pas encore. PLAYER_ENTERING_WORLD applique le mode.
       if not veille then veille = true; C_Timer.After(VEILLE, veiller) end
@@ -633,6 +762,10 @@ cadre:SetScript("OnEvent", function(_, ev, a1, texte, canal, expediteur)
     redessiner()
   elseif ev == "PLAYER_REGEN_ENABLED" then
     if differe and ObjectiveTrackerFrame then appliquerSuiviDuJeu(ObjectiveTrackerFrame) end
+  elseif ev == "QUEST_ACCEPTED" then
+    -- Forever : (questID) ; d'autres clients Classic : (index, questID).
+    local id = type(texte) == "number" and texte or a1
+    if e.db.abandonnees and id then e.db.abandonnees[id] = nil end
   elseif MONJOURNAL[ev] then
     if e.db.compagnie then ns.signaler(e, false, envoi); redessinerBientot() end
   elseif a1 == PREFIXE and type(texte) == "string" and type(expediteur) == "string" then

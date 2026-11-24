@@ -1,13 +1,16 @@
 -- Compagnie, les états des membres : encodage, réception, dernier état connu, envoi regroupé. La logique seule, sans
 -- aucun appel à l'API du jeu (vérifié par check.lua) ; Compagnie.lua lit mon journal en direct et transporte les messages.
 -- Un état : { niveau = 35, quetes = { [idQuête] = { finie = false, objectifs = { { fait = 2, total = 10 }, … }, zone = "…" } },
---             rendues = { [idQuête] = true } }
+--             rendues = { [idQuête] = true }, abandonnees = { [idQuête] = true } }
 -- Le texte des objectifs ne part jamais (il porte un code de grammaire du jeu, « |4…; ») : seulement les nombres, dans
 -- l'ordre des objectifs ; chacun retrouve le texte dans son propre journal (Calcul.lua le prend chez qui l'a).
--- Corps encodé : « niveau#quête;quête…#rendue,rendue…#zone=id,id;zone=id… », une quête « id:finie(0|1)[:fait/total…] »,
+-- Corps encodé : « niveau#quête;quête…#rendue,rendue…#zone=id,id;zone=id…#abandonnée,abandonnée… », une quête
+-- « id:finie(0|1)[:fait/total…] »,
 -- ids triés. Le 4e champ (#13) range les quêtes par zone (l'en-tête de zone de mon journal), zones triées ; vide si
 -- aucune quête n'a de zone. Une zone : 1 à MAX_ZONE octets, ni caractère de contrôle, ni « | » (codes du chat), ni
--- séparateur du format ; un en-tête de mon journal qui ne l'est pas ne part pas (la quête part sans zone).
+-- séparateur du format ; un en-tête de mon journal qui ne l'est pas ne part pas (la quête part sans zone). Le 5e champ
+-- (#5) : les quêtes que j'ai abandonnées, parmi celles qu'un autre membre a encore. « partageable » ne part pas (le jeu
+-- ne le dit que pour mes quêtes).
 -- Messages d'add-on (préfixe Compagnie) : « E;idCompagnie;envoi/i/n;morceau » (un état en n morceaux bornés à 255
 -- octets) et « D;idCompagnie » (demande d'état). L'expéditeur (de) est le GUID que Compagnie.lua tient du serveur.
 -- Donnée reçue entre membres (CONTEXT-MAP) : servie telle quelle, mais lue strictement (un champ mal formé et tout l'état
@@ -54,15 +57,15 @@ function ns.encoder(etat)
   local parZone = {}
   for _, z in ipairs(trier(zones)) do parZone[#parZone + 1] = z .. "=" .. table.concat(zones[z], ",") end
   return (etat.niveau or 0) .. "#" .. table.concat(quetes, ";") .. "#" .. table.concat(rendues, ",") .. "#" ..
-    table.concat(parZone, ";")
+    table.concat(parZone, ";") .. "#" .. table.concat(trier(etat.abandonnees), ",")
 end
 
 -- L'état, ou nil au moindre champ mal formé.
 function ns.decoder(corps)
   local f = couper(corps, "#")
-  local niveau = #f == 4 and entier(f[1], 200)
+  local niveau = #f == 5 and entier(f[1], 200)
   if not niveau or niveau < 1 then return end
-  local etat = { niveau = niveau, quetes = {}, rendues = {} }
+  local etat = { niveau = niveau, quetes = {}, rendues = {}, abandonnees = {} }
   local liste = f[2] == "" and {} or couper(f[2], ";")
   if #liste > MAX_QUETES then return end
   for _, q in ipairs(liste) do
@@ -78,12 +81,14 @@ function ns.decoder(corps)
     end
     etat.quetes[id] = { finie = c[2] == "1", objectifs = objectifs }
   end
-  liste = f[3] == "" and {} or couper(f[3], ",")
-  if #liste > MAX_RENDUES then return end
-  for _, r in ipairs(liste) do
-    local id = entier(r, 2147483647)
-    if not id or id < 1 then return end
-    etat.rendues[id] = true
+  for champ, ids in pairs({ [3] = etat.rendues, [5] = etat.abandonnees }) do
+    liste = f[champ] == "" and {} or couper(f[champ], ",")
+    if #liste > MAX_RENDUES then return end
+    for _, r in ipairs(liste) do
+      local id = entier(r, 2147483647)
+      if not id or id < 1 then return end
+      ids[id] = true
+    end
   end
   local vues = {}
   for _, champ in ipairs(f[4] == "" and {} or couper(f[4], ";")) do
@@ -149,7 +154,7 @@ function ns.membresDuCalcul(db, moi, monEtat, presents)
   for i, m in ipairs(c.membres) do
     local etat = m.guid == moi and monEtat or (db.etats and db.etats[m.guid]) or { quetes = {} }
     liste[i] = { nom = m.guid, niveau = etat.niveau, quetes = etat.quetes, rendues = etat.rendues,
-      absent = m.guid ~= moi and not presents[m.guid] }
+      abandonnees = etat.abandonnees, absent = m.guid ~= moi and not presents[m.guid] }
   end
   return liste
 end
@@ -164,7 +169,8 @@ function ns.corriger(etat, ids, surQuete)
     if sur == false then quetes[id] = nil
     elseif sur == true and not quetes[id] then quetes[id] = { finie = false, objectifs = {} } end
   end
-  return { nom = etat.nom, niveau = etat.niveau, quetes = quetes, rendues = etat.rendues, absent = etat.absent }
+  return { nom = etat.nom, niveau = etat.niveau, quetes = quetes, rendues = etat.rendues, abandonnees = etat.abandonnees,
+    absent = etat.absent }
 end
 
 -- Un changement de mon état (force : une demande d'état, il part même inchangé). Une rafale d'événements ne programme
