@@ -4,22 +4,22 @@
 --     quetes = { [idQuête] = { finie = false, objectifs = { { texte = "Patte de loup", fait = 5, total = 8 }, … } } },
 --     avant = { [idQuête] = true } (ses quêtes d'avant, #20 : dans son journal à son entrée dans la Compagnie),
 --     rendues = { [idQuête] = true } (rendues depuis son entrée), renduesAvant = { [idQuête] = true } (avant),
---     abandonnees = { [idQuête] = true },
 --     auberge = "Comté-de-l'Or", liaison = 1764000000, finRecharge = 1764002400 } (heures serveur ; nil : inconnu, ou
 --     pierre prête)
 --     (une quête peut porter sa zone : zone = "Forêt d'Elwynn", et partageable = true : seulement dans mon journal, lu
 --     en direct, le jeu ne le dit que pour mes quêtes)
 -- maintenant : l'heure serveur (pour la pierre de la Compagnie).
+-- ecartees : les décisions de la Compagnie (#21), { [idQuête] = { ecartee = true (false : remise), date, par = "Léo" } }.
 -- Sortie : { niveau = 9, foyer = "Comté-de-l'Or", pierre = 2400 (secondes avant qu'elle soit prête ; 0 : prête),
 --           quetes = { [idQuête] = { objectifs = { … }, aRendre = false, enAttente = { "Léo" }, zone = … } },
---           aPart = { { quete = id, membre = "Léo", objectifs = { … }, aRendre = true, zone = … } },
+--           aPart = { { quete = id, membre = "Léo", objectifs = { … }, aRendre = true, zone = …, ecartee = true } },
 --           aFaire = { { type = "partager", membre = "Virgile", quete = id, manquants = { "Léo" } },
---                      { type = "abandonnee", membre = "Léo", quete = id, par = { "Virgile" } },
+--                      { type = "ecartee", membre = "Léo", quete = id, par = "Virgile" },
 --                      { type = "avance", membre = "Léo", quete = id, par = { "Virgile" } },
 --                      { type = "foyer", membre = "Léo", auberge = "Comté-de-l'Or" } } }
--- Les quêtes de la Compagnie sont celles qu'au moins un membre a en cours, sauf une quête d'avant (#20) : elle est à
--- part (aPart, chez chaque membre qui l'a, avec son avancement à lui), sans écart et sans faire attendre personne ; si
--- tous les membres l'ont, elle redevient commune. Pour chaque quête de la Compagnie, membre par membre :
+-- Les quêtes de la Compagnie sont celles qu'au moins un membre a en cours, sauf une quête écartée (#21) et une quête
+-- d'avant (#20) : elle est à part (aPart, chez chaque membre qui l'a, avec son avancement à lui), sans faire attendre
+-- personne ; une quête d'avant que tous les membres ont redevient commune. Pour chaque quête de la Compagnie, membre par membre :
 --   - en cours : son avancement compte, objectif par objectif (le moins avancé l'emporte) ;
 --   - déjà rendue (avant ou après son entrée) : il ne retient plus la Compagnie ;
 --   - ni l'un ni l'autre : il compte à 0 et la Compagnie l'attend (jamais à rendre sans lui).
@@ -33,7 +33,7 @@ local _, ns = ...
 
 local function rendue(m, id) return m.rendues and m.rendues[id] or m.renduesAvant and m.renduesAvant[id] end
 
-function ns.calculer(membres, maintenant)
+function ns.calculer(membres, maintenant, ecartees)
   local quetes, aPart, niveau, foyer, recent, pierre = {}, {}, nil, nil, 0, 0
   local tenue, avant = {}, {} -- [id] = combien de membres l'ont en cours ; [id] = true : quête d'avant d'un membre
   for _, m in ipairs(membres) do
@@ -45,12 +45,15 @@ function ns.calculer(membres, maintenant)
       if m.avant and m.avant[id] then avant[id] = true end
     end
   end
-  local function commune(id) return not avant[id] or tenue[id] == #membres end
+  ecartees = ecartees or {}
+  local function ecartee(id) return ecartees[id] and ecartees[id].ecartee end
+  local function commune(id) return not ecartee(id) and (not avant[id] or tenue[id] == #membres) end
   for id in pairs(tenue) do if commune(id) then quetes[id] = { objectifs = {}, aRendre = true, enAttente = {} } end end
   for _, m in ipairs(membres) do
     for id, q in pairs(m.quetes or {}) do
       if not commune(id) then
-        aPart[#aPart + 1] = { quete = id, membre = m.nom, objectifs = q.objectifs or {}, aRendre = q.finie == true, zone = q.zone }
+        aPart[#aPart + 1] = { quete = id, membre = m.nom, objectifs = q.objectifs or {}, aRendre = q.finie == true, zone = q.zone,
+          ecartee = ecartee(id) }
       end
     end
   end
@@ -72,7 +75,7 @@ function ns.calculer(membres, maintenant)
       end
     end
     -- Un objectif absent du journal d'un membre (quête pas encore chargée, ou pas de quête du tout) compte à 0.
-    -- ponytail: sans la quête, un membre compte à 0 ; l'écart (à partager, abandonnée) dit quoi faire.
+    -- ponytail: sans la quête, un membre compte à 0 ; l'écart (à partager, écartée) dit quoi faire.
     for _, m in ipairs(membres) do
       local q = m.quetes and m.quetes[id]
       if q or not rendue(m, id) then
@@ -83,34 +86,32 @@ function ns.calculer(membres, maintenant)
     end
   end
   return { niveau = niveau, foyer = foyer, pierre = pierre, quetes = quetes, aPart = aPart,
-    aFaire = ns.ecarts(membres, foyer, quetes) }
+    aFaire = ns.ecarts(membres, foyer, quetes, ecartees) }
 end
 
 -- La liste À faire : les écarts, chacun avec le membre visé (celui qui agit) et l'action ; triée par quête.
---   - quête abandonnée : un membre l'a abandonnée (« la Compagnie ne fait pas celle-là »), un autre l'a encore : chez
---     celui-ci, « Abandonner aussi » ; résorbée quand plus personne ne l'a ;
+--   - quête écartée (#21) : la Compagnie ne la fait pas, un membre l'a encore : chez lui, « Abandonner aussi » (par = qui
+--     l'a écartée) ; résorbée quand il l'a abandonnée. Elle n'est jamais à partager ni en avance ;
 --   - quête à partager : un membre l'a, partageable, d'autres ne l'ont ni en cours, ni rendue : chez lui, « Partager » ;
---     résorbée quand tous l'ont. Une quête abandonnée par un membre n'est jamais à partager.
+--     résorbée quand tous l'ont.
 --   - quête en avance : un membre l'a rendue pendant qu'un autre l'a encore, pas finie : chez celui-ci, l'écart dit ce
 --     qui s'est passé (par = qui l'a rendue, jamais affiché) ; résorbée quand il l'a finie.
 --   - foyer différent : un membre lié à une autre auberge que le foyer (sans quête : en tête de liste).
 -- Une quête à part (d'avant, #20 : communes = les quêtes de la Compagnie) ne crée aucun écart ; seule une remise vue
 -- après l'entrée (rendues, pas renduesAvant) fait une quête en avance.
-function ns.ecarts(membres, foyer, communes)
-  local t, abandons, rendues = {}, {}, {}
+function ns.ecarts(membres, foyer, communes, ecartees)
+  local t, rendues = {}, {}
   for _, m in ipairs(membres) do
     if foyer and m.auberge and m.auberge ~= foyer then t[#t + 1] = { type = "foyer", membre = m.nom, auberge = foyer } end
-    for id in pairs(m.abandonnees or {}) do abandons[id] = abandons[id] or {}; table.insert(abandons[id], m.nom) end
     for id in pairs(m.rendues or {}) do rendues[id] = rendues[id] or {}; table.insert(rendues[id], m.nom) end
   end
   for _, m in ipairs(membres) do
     for id, q in pairs(m.quetes or {}) do
-      if communes[id] then -- une quête à part : aucun écart
+      local d = ecartees[id]
+      if d and d.ecartee then t[#t + 1] = { type = "ecartee", membre = m.nom, quete = id, par = d.par }
+      elseif communes[id] then -- sinon une quête d'avant : aucun écart
         if rendues[id] and not q.finie then t[#t + 1] = { type = "avance", membre = m.nom, quete = id, par = rendues[id] } end
-        local par = {}
-        for _, nom in ipairs(abandons[id] or {}) do if nom ~= m.nom then par[#par + 1] = nom end end
-        if #par > 0 then t[#t + 1] = { type = "abandonnee", membre = m.nom, quete = id, par = par }
-        elseif q.partageable and not abandons[id] then
+        if q.partageable then
           local manquants = {}
           for _, n in ipairs(membres) do
             if not (n.quetes and n.quetes[id] or rendue(n, id)) then manquants[#manquants + 1] = n.nom end

@@ -20,8 +20,11 @@ with the shared progress: a quest is ready to turn in only when everyone is done
 
 - **Le suivi par zone** : les quêtes de la zone où tu es, ou d'une zone choisie (clic sur le titre « Quêtes »).
 - **La liste À faire** : « Partager » une quête que tu as et qu'un membre n'a pas ; « Abandonner aussi » une quête
-  qu'un membre a abandonnée (abandonner, c'est dire « la Compagnie ne fait pas celle-là »). Un bouton chacun : l'add-on
-  n'abandonne jamais rien tout seul. Mode Compagnie éteint, une petite liste À faire reste à l'écran.
+  que la Compagnie a écartée. Un bouton chacun : l'add-on n'abandonne jamais rien tout seul. Mode Compagnie éteint, une
+  petite liste À faire reste à l'écran.
+- **Écarter une quête** (« la Compagnie ne fait pas celle-là ») : clic sur son titre dans le suivi, ou clic droit sur
+  « Partager » ; abandonner une quête dans le jeu l'écarte aussi. Elle sort du suivi de tous, le chat dit qui l'a
+  écartée ; l'onglet **Écartées** de la fenêtre de la Compagnie la remet.
 - **Rendre trop tôt ?** Quand tu vas rendre une quête que la Compagnie n'a pas finie, un bandeau sous la fenêtre du jeu
   le dit (« La Compagnie n'a pas fini : 5/8 ») ; le bouton du jeu reste tel quel, tu peux rendre quand même. Les autres
   voient alors « Rendue en avance » dans leur liste À faire, jusqu'à ce qu'ils l'aient finie.

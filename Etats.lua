@@ -1,18 +1,20 @@
 -- Compagnie, les états des membres : encodage, réception, dernier état connu, envoi regroupé. La logique seule, sans
 -- aucun appel à l'API du jeu (vérifié par check.lua) ; Compagnie.lua lit mon journal en direct et transporte les messages.
 -- Un état : { niveau = 35, quetes = { [idQuête] = { finie = false, objectifs = { { fait = 2, total = 10 }, … }, zone = "…" } },
---             rendues = { [idQuête] = true }, abandonnees = { [idQuête] = true },
+--             rendues = { [idQuête] = true }, ecartees = { [idQuête] = { ecartee = true|false, date, par = "Léo" } },
 --             avant = { [idQuête] = true } (mes quêtes d'avant encore dans mon journal), renduesAvant = { [idQuête] = true },
 --             auberge = "Comté-de-l'Or", liaison = heure serveur de la liaison, finRecharge = heure serveur où la pierre
 --             de foyer est prête } (les trois du foyer, #9 : nil quand inconnus, ou pierre prête)
 -- Le texte des objectifs ne part jamais (il porte un code de grammaire du jeu, « |4…; ») : seulement les nombres, dans
 -- l'ordre des objectifs ; chacun retrouve le texte dans son propre journal (Calcul.lua le prend chez qui l'a).
--- Corps encodé : « niveau#quête;quête…#rendue,rendue…#zone=id,id;zone=id…#abandonnée,abandonnée…#auberge#liaison#fin
+-- Corps encodé : « niveau#quête;quête…#rendue,rendue…#zone=id,id;zone=id…#écartée;écartée…#auberge#liaison#fin
 -- #avant,avant…#renduesAvant,renduesAvant… »,
 -- une quête « id:finie(0|1)[:fait/total…] », ids triés. Le 4e champ (#13) range les quêtes par zone (l'en-tête de zone de mon journal), zones triées ; vide si
 -- aucune quête n'a de zone. Une zone : 1 à MAX_ZONE octets, ni caractère de contrôle, ni « | » (codes du chat), ni
 -- séparateur du format ; un en-tête de mon journal qui ne l'est pas ne part pas (la quête part sans zone). Le 5e champ
--- (#5) : les quêtes que j'ai abandonnées, parmi celles qu'un autre membre a encore. « partageable » ne part pas (le jeu
+-- (#21) : les décisions de la Compagnie sur les quêtes écartées, telles que je les connais, « id:1|0:date:par » (1 :
+-- écartée, 0 : remise ; date : heure serveur ; par : le prénom de qui l'a décidé, mêmes règles qu'une zone), ids triés ;
+-- au plus MAX_ECARTEES, les plus récentes. « partageable » ne part pas (le jeu
 -- ne le dit que pour mes quêtes). Les 6e à 8e champs (#9) : l'auberge liée (mêmes règles qu'une zone), l'heure serveur
 -- (GetServerTime) de la liaison et celle où la pierre de foyer sera prête ; chacun vide quand il est inconnu (ou la
 -- pierre prête). Une heure et non une durée : un absent compte avec sa recharge recalculée depuis son envoi.
@@ -25,6 +27,7 @@
 local _, ns = ...
 local MAX_QUETES, MAX_OBJECTIFS, MAX_RENDUES, MAX_MORCEAUX, DEBIT = 60, 20, 300, 10, 60 -- DEBIT : messages / minute
 local MAX_ZONE = 48 -- octets : « Contreforts de Hautebrande » en fait 26
+local MAX_ECARTEES = 50
 ns.DELAI_ENVOI = 3 -- secondes : une rafale d'événements part en un seul envoi
 
 -- Les morceaux de s séparés par sep (un caractère), vides compris.
@@ -61,12 +64,20 @@ function ns.encoder(etat)
     if zoneValide(q.zone) then zones[q.zone] = zones[q.zone] or {}; table.insert(zones[q.zone], id) end
   end
   for _, id in ipairs(trier(etat.rendues)) do rendues[#rendues + 1] = id end
+  local decisions, ecartees = {}, {}
+  for id, d in pairs(etat.ecartees or {}) do decisions[#decisions + 1] = { id = id, d = d } end
+  table.sort(decisions, function(a, b) return a.d.date > b.d.date end) -- ponytail: au-delà de MAX_ECARTEES, les plus anciennes ne partent plus
+  for i = #decisions, MAX_ECARTEES + 1, -1 do decisions[i] = nil end
+  table.sort(decisions, function(a, b) return a.id < b.id end)
+  for _, x in ipairs(decisions) do
+    ecartees[#ecartees + 1] = table.concat({ x.id, x.d.ecartee and 1 or 0, x.d.date, zoneValide(x.d.par) and x.d.par or "?" }, ":")
+  end
   local avant = {}
   for _, id in ipairs(trier(etat.avant)) do if etat.quetes and etat.quetes[id] then avant[#avant + 1] = id end end
   local parZone = {}
   for _, z in ipairs(trier(zones)) do parZone[#parZone + 1] = z .. "=" .. table.concat(zones[z], ",") end
   return (etat.niveau or 0) .. "#" .. table.concat(quetes, ";") .. "#" .. table.concat(rendues, ",") .. "#" ..
-    table.concat(parZone, ";") .. "#" .. table.concat(trier(etat.abandonnees), ",") .. "#" ..
+    table.concat(parZone, ";") .. "#" .. table.concat(ecartees, ";") .. "#" ..
     (zoneValide(etat.auberge) and etat.auberge or "") .. "#" .. (etat.liaison or "") .. "#" .. (etat.finRecharge or "") ..
     "#" .. table.concat(avant, ",") .. "#" .. table.concat(trier(etat.renduesAvant), ",")
 end
@@ -76,7 +87,7 @@ function ns.decoder(corps)
   local f = couper(corps, "#")
   local niveau = #f == 10 and entier(f[1], 200)
   if not niveau or niveau < 1 then return end
-  local etat = { niveau = niveau, quetes = {}, rendues = {}, abandonnees = {}, avant = {}, renduesAvant = {} }
+  local etat = { niveau = niveau, quetes = {}, rendues = {}, ecartees = {}, avant = {}, renduesAvant = {} }
   local liste = f[2] == "" and {} or couper(f[2], ";")
   if #liste > MAX_QUETES then return end
   for _, q in ipairs(liste) do
@@ -92,7 +103,16 @@ function ns.decoder(corps)
     end
     etat.quetes[id] = { finie = c[2] == "1", objectifs = objectifs }
   end
-  for champ, ids in pairs({ [3] = etat.rendues, [5] = etat.abandonnees, [9] = etat.avant, [10] = etat.renduesAvant }) do
+  liste = f[5] == "" and {} or couper(f[5], ";")
+  if #liste > MAX_ECARTEES then return end
+  for _, x in ipairs(liste) do
+    local c = couper(x, ":")
+    local id, date = entier(c[1], 2147483647), entier(c[3] or "", 2147483647)
+    if #c ~= 4 or not (id and id >= 1 and date and date >= 1) or etat.ecartees[id] or (c[2] ~= "0" and c[2] ~= "1")
+      or not zoneValide(c[4]) then return end
+    etat.ecartees[id] = { ecartee = c[2] == "1", date = date, par = c[4] }
+  end
+  for champ, ids in pairs({ [3] = etat.rendues, [9] = etat.avant, [10] = etat.renduesAvant }) do
     liste = f[champ] == "" and {} or couper(f[champ], ",")
     if #liste > MAX_RENDUES then return end
     for _, r in ipairs(liste) do
@@ -136,7 +156,7 @@ function ns.morceaux(id, corps, envoi)
 end
 
 -- Un message E ou D reçu de de (GUID). e = { db = CompagnieDB, moi = mon GUID } ; io = { maj = fn(), demande = fn(de),
--- maintenant = fn() -> secondes }. Rend true si le message est un message d'état (traité ou ignoré).
+-- maintenant = fn() -> secondes, annoncer = fn(décisions qui ont changé, voir ns.fusionner) }. Rend true si le message est un message d'état (traité ou ignoré).
 function ns.recevoirEtat(e, de, texte, io)
   local verbe, id, reste = texte:match("^([ED]);([^;]+);?(.*)$")
   if not verbe then return false end
@@ -162,8 +182,33 @@ function ns.recevoirEtat(e, de, texte, io)
   if not etat then return true end
   e.db.etats = e.db.etats or {}
   e.db.etats[de] = etat -- le dernier état connu : une donnée propre, sauvegardée
+  local changees = ns.fusionner(e.db, etat.ecartees)
   io.maj()
+  if #changees > 0 then io.annoncer(changees) end
   return true
+end
+
+-- Écarter (ecartee = true) ou remettre une quête (#21) : une décision de la Compagnie, datée (heure serveur), avec le
+-- prénom de qui l'a prise ; db.ecartees la garde (donnée propre, envoyée avec mon état).
+function ns.decider(db, id, ecartee, par, date)
+  db.ecartees = db.ecartees or {}
+  db.ecartees[id] = { ecartee = ecartee, date = date, par = par }
+end
+
+-- Les décisions reçues avec l'état d'un membre : la plus récente l'emporte, quête par quête (à la même seconde, écarter
+-- l'emporte sur remettre). Rend celles qui ont changé, { { quete = id, ecartee, par }, … } triées par quête.
+function ns.fusionner(db, recues)
+  local changees = {}
+  for id, d in pairs(recues or {}) do
+    db.ecartees = db.ecartees or {}
+    local a = db.ecartees[id]
+    if not a or d.date > a.date or (d.date == a.date and d.ecartee and not a.ecartee) then
+      db.ecartees[id] = { ecartee = d.ecartee, date = d.date, par = d.par }
+      changees[#changees + 1] = { quete = id, ecartee = d.ecartee, par = d.par }
+    end
+  end
+  table.sort(changees, function(a, b) return a.quete < b.quete end)
+  return changees
 end
 
 -- Les membres pour ns.calculer, dans l'ordre de la Compagnie : moi avec mon état lu en direct, les autres avec leur
@@ -176,7 +221,7 @@ function ns.membresDuCalcul(db, moi, monEtat, presents)
   for i, m in ipairs(c.membres) do
     local etat = m.guid == moi and monEtat or (db.etats and db.etats[m.guid]) or { quetes = {} }
     liste[i] = { nom = m.guid, niveau = etat.niveau, quetes = etat.quetes, rendues = etat.rendues,
-      renduesAvant = etat.renduesAvant, avant = etat.avant, abandonnees = etat.abandonnees, auberge = etat.auberge, liaison = etat.liaison, finRecharge = etat.finRecharge,
+      renduesAvant = etat.renduesAvant, avant = etat.avant, auberge = etat.auberge, liaison = etat.liaison, finRecharge = etat.finRecharge,
       absent = m.guid ~= moi and not presents[m.guid] }
   end
   return liste
@@ -193,7 +238,7 @@ function ns.corriger(etat, ids, surQuete)
     elseif sur == true and not quetes[id] then quetes[id] = { finie = false, objectifs = {} } end
   end
   return { nom = etat.nom, niveau = etat.niveau, quetes = quetes, rendues = etat.rendues, renduesAvant = etat.renduesAvant,
-    avant = etat.avant, abandonnees = etat.abandonnees,
+    avant = etat.avant,
     auberge = etat.auberge, liaison = etat.liaison, finRecharge = etat.finRecharge, absent = etat.absent }
 end
 

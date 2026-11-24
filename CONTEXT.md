@@ -29,7 +29,7 @@ Une différence entre les journaux de quêtes des membres, qui demande une actio
 _Avoid_: désynchro, divergence
 
 **Quête d'avant**:
-Une quête qu'un membre avait dans son journal en entrant dans la Compagnie (les restes de sa zone de départ) : à lui, affichée chez tous à part, avec son nom et son avancement, comme une quête personnelle ; elle ne crée aucun écart et ne fait attendre personne. Si tous les membres l'ont, elle redevient une quête de la Compagnie ; elle disparaît quand il la rend ou l'abandonne.
+Une quête qu'un membre avait dans son journal en entrant dans la Compagnie (les restes de sa zone de départ) : à lui, affichée chez tous à part, avec son nom et son avancement, comme une quête personnelle ; elle ne crée aucun écart et ne fait attendre personne. Si tous les membres l'ont, elle redevient une quête de la Compagnie ; elle disparaît quand il la rend ou l'abandonne (l'abandonner ne l'écarte pas : elle n'était qu'à lui).
 _Avoid_: ancienne quête, quête héritée
 
 **Quête à partager**:
@@ -39,9 +39,9 @@ _Avoid_: ancienne quête, quête héritée
 Écart où un membre a une quête que d'autres n'ont pas, et que le jeu ne permet pas de partager (lancée par un objet, ou le PNJ remet un objet) : chacun doit aller la chercher.
 _Avoid_: quête non partageable
 
-**Quête abandonnée**:
-Écart où un membre a abandonné une quête que d'autres ont encore : abandonner, c'est la façon de dire « la Compagnie ne fait pas celle-là », et les autres l'abandonnent aussi.
-_Avoid_: quête ignorée, quête refusée
+**Quête écartée**:
+Une quête que la Compagnie ne fait pas, décidé par n'importe quel membre, avant ou après l'avoir prise (« Écarter » dans le suivi ou la liste À faire) ; abandonner une quête dans le jeu, c'est l'écarter. Elle sort de l'avancement commun et des écarts chez tous, et n'est jamais à partager. Chez un membre qui l'a encore : écart « Abandonner aussi », jamais d'abandon automatique ; s'il la garde, elle est à lui, à part, nommée. « Remettre » annule ; chaque décision est datée, la plus récente l'emporte, et le chat dit qui a écarté ou remis quoi.
+_Avoid_: quête abandonnée (l'abandon n'est qu'une façon d'écarter), quête ignorée, quête refusée
 
 **Quête en avance**:
 Écart où un membre a rendu, ou s'apprête à rendre, une quête dont l'avancement commun n'est pas complet ; l'add-on avertit, il ne bloque pas. Seule compte une remise que l'add-on du membre a vue après son entrée dans la Compagnie : ce qu'il a rendu avant n'est jamais en avance. Avant : un bandeau sous la fenêtre de remise du jeu (« La Compagnie n'a pas fini : 5/8 »), le bouton du jeu intact. Après : chez chaque membre qui l'a encore sans l'avoir finie, « Rendue en avance », sans nommer qui l'a rendue ; résorbée quand il l'a finie.
