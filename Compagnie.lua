@@ -38,7 +38,7 @@ local function groupe()
   return t
 end
 
-local dessiner
+local dessiner, monEtat -- plus bas
 local jeu = {
   envoyer = function(texte)
     if IsInGroup() then C_ChatInfo.SendAddonMessage(PREFIXE, texte, IsInRaid() and "RAID" or "PARTY") end
@@ -46,6 +46,13 @@ local jeu = {
   dire = function(texte) print("|cffa78ffcCompagnie :|r " .. texte) end,
   proposer = function(p) StaticPopup_Show(p.deja and "COMPAGNIE_DEJA" or "COMPAGNIE_PROPOSITION", p.nom) end,
   maj = function() ns.majCompagnie() end, -- la Compagnie a changé (fondée, quittée, un membre retiré)
+  -- J'entre dans la Compagnie (#20) : ce qui est dans mon journal devient mes quêtes d'avant ; seules les remises vues
+  -- à partir d'ici comptent pour une quête en avance (CompagnieDB.renduesVues, noté à QUEST_TURNED_IN).
+  entrer = function()
+    local avant = {}
+    for id in pairs(monEtat().quetes) do avant[id] = true end
+    e.db.avant, e.db.renduesVues = avant, {}
+  end,
 }
 
 StaticPopupDialogs.COMPAGNIE_PROPOSITION = {
@@ -120,7 +127,7 @@ local function entier(v, max) return math.min(max, math.max(0, math.floor(tonumb
 
 -- La zone d'une quête (#13) : l'en-tête sous lequel le journal la range (en Classic, un nom de zone ; à vérifier en jeu
 -- contre GetRealZoneText).
-local function monEtat()
+function monEtat()
   local quetes, rendues, zone = {}, {}, nil
   for i = 1, 200 do
     local info = C_QuestLog.GetInfo(i)
@@ -142,14 +149,19 @@ local function monEtat()
     end
   end
   -- Rendues et abandonnées : parmi les quêtes des autres membres, celles que j'ai déjà rendues ou abandonnées (pas tout
-  -- l'historique : il ne tient pas dans un message).
-  local abandonnees, mesAbandons = {}, e.db.abandonnees or {}
+  -- l'historique : il ne tient pas dans un message). Une remise que l'add-on n'a pas vue depuis mon entrée (#20) est
+  -- d'avant : elle ne fait pas de quête en avance.
+  local abandonnees, mesAbandons, renduesAvant, vues = {}, e.db.abandonnees or {}, {}, e.db.renduesVues or {}
   for _, etat in pairs(e.db.etats or {}) do
     for id in pairs(etat.quetes or {}) do
-      if not quetes[id] and C_QuestLog.IsQuestFlaggedCompleted(id) then rendues[id] = true end
+      if not quetes[id] and C_QuestLog.IsQuestFlaggedCompleted(id) then
+        if vues[id] then rendues[id] = true else renduesAvant[id] = true end
+      end
       if mesAbandons[id] then abandonnees[id] = true end
     end
   end
+  local avant = {}
+  for id in pairs(e.db.avant or {}) do if quetes[id] then avant[id] = true end end
   -- Le foyer (#9) : l'auberge liée (GetBindLocation) ; l'heure de la liaison seulement si je l'ai vue se faire
   -- (HEARTHSTONE_BOUND, CompagnieDB.foyer), sinon inconnue ; l'heure serveur où ma pierre de foyer sera prête
   -- (C_Container.GetItemCooldown : en secondes de GetTime, converties), arrondie à la minute pour que l'état ne change
@@ -157,7 +169,8 @@ local function monEtat()
   local auberge, f = GetBindLocation(), e.db.foyer
   local debut, recharge = C_Container.GetItemCooldown(PIERRE)
   local reste = (debut or 0) > 0 and (recharge or 0) > 1.5 and debut + recharge - GetTime() or 0 -- 1.5 s : temps global
-  return { niveau = UnitLevel("player"), quetes = quetes, rendues = rendues, abandonnees = abandonnees,
+  return { niveau = UnitLevel("player"), quetes = quetes, rendues = rendues, renduesAvant = renduesAvant, avant = avant,
+    abandonnees = abandonnees,
     auberge = auberge ~= "" and auberge or nil, liaison = f and f.auberge == auberge and f.date or nil,
     finRecharge = reste > 0 and math.ceil((GetServerTime() + reste) / 60) * 60 or nil }
 end
@@ -328,6 +341,17 @@ local function texteSuivi(calc, presents)
     end
     if q.aRendre then lignes[#lignes + 1] = "  |cff59cc73À rendre|r"
     elseif #attente > 0 then lignes[#lignes + 1] = "  |cff999999En attente de " .. table.concat(attente, ", ") .. "|r" end
+  end
+  -- Les quêtes à part (#20 : quêtes d'avant), sous les quêtes de la Compagnie : nommées, avec l'avancement de qui l'a ;
+  -- À rendre quand il l'a finie, sans attendre personne.
+  local entete = false
+  for _, a in ipairs(calc.aPart) do
+    if not voir or a.zone == voir then
+      if not entete then lignes[#lignes + 1], entete = (#lignes > 0 and "\n" or "") .. "|cff999999À part|r", true end
+      lignes[#lignes + 1] = "|cffc0c0c0" .. titre(a.quete) .. " (" .. prenom(a.membre) .. ")|r"
+      for i, o in ipairs(a.objectifs) do lignes[#lignes + 1] = ligneObjectif(i, o) end
+      if a.aRendre then lignes[#lignes + 1] = "  |cff59cc73À rendre|r" end
+    end
   end
   if #lignes > 0 then return table.concat(lignes, "\n") end
   return voir and "|cff999999Aucune quête de la Compagnie dans cette zone.|r" or "|cff999999Aucune quête en cours.|r"
@@ -772,7 +796,9 @@ end
 
 -- La Compagnie a changé : le mode suit, et mon état part (forcé : de nouveaux membres ne l'ont pas).
 function ns.majCompagnie()
-  if not e.db.compagnie then e.db.etats, e.db.abandonnees = nil, nil end -- plus de Compagnie : derniers états et abandons oubliés
+  if not e.db.compagnie then -- plus de Compagnie : derniers états, abandons, quêtes d'avant et remises vues oubliés
+    e.db.etats, e.db.abandonnees, e.db.avant, e.db.renduesVues = nil, nil, nil, nil
+  end
   appliquerMode()
   redessiner()
   ns.signaler(e, true, envoi)
@@ -867,9 +893,15 @@ cadre:SetScript("OnEvent", function(_, ev, a1, texte, canal, expediteur)
     -- Forever : (questID) ; d'autres clients Classic : (index, questID).
     local id = type(texte) == "number" and texte or a1
     if e.db.abandonnees and id then e.db.abandonnees[id] = nil end
+    if e.db.avant and id then e.db.avant[id] = nil end -- reprise après l'entrée : une quête de la Compagnie
   elseif MONJOURNAL[ev] then
     -- Ma liaison (#9) : notée avec l'heure serveur, vue par le jeu (rien n'est deviné d'une liaison faite add-on éteint).
     if ev == "HEARTHSTONE_BOUND" then e.db.foyer = { auberge = GetBindLocation(), date = GetServerTime() } end
+    -- Une remise vue depuis mon entrée (#20) : elle peut faire une quête en avance chez les autres.
+    if ev == "QUEST_TURNED_IN" and e.db.compagnie and type(a1) == "number" then
+      e.db.renduesVues = e.db.renduesVues or {}
+      e.db.renduesVues[a1] = true
+    end
     if e.db.compagnie then ns.signaler(e, false, envoi); redessinerBientot() end
   elseif a1 == PREFIXE and type(texte) == "string" and type(expediteur) == "string" then
     local nom = AC.Destinataire(expediteur)

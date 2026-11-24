@@ -1,15 +1,17 @@
 # Compagnie
 
-**Une équipe fixe de 2 à 5 personnages qui font toute l'aventure ensemble, du niveau 1 à la fin.** Add-on pour
+**Une équipe fixe de 2 à 5 personnages qui font l'aventure ensemble, à partir du niveau où ils se retrouvent.** Add-on pour
 WoW Forever, en bêta, interface en français.
 
-*English: a fixed party of 2 to 5 characters questing together from level 1. Compagnie mode replaces the quest tracker
+*English: a fixed party of 2 to 5 characters questing together from the moment they meet, at any level. Compagnie mode replaces the quest tracker
 with the shared progress: a quest is ready to turn in only when everyone is done. French UI for now.*
 
 ## Ce que ça fait
 
 - **Fonder une Compagnie** en un clic depuis ton groupe du jeu : chaque membre accepte ou refuse. Un personnage n'est
-  membre que d'une Compagnie ; il n'y a pas de chef.
+  membre que d'une Compagnie ; il n'y a pas de chef. À n'importe quel niveau, races différentes comprises : ce que
+  chacun a dans son journal en entrant devient ses **quêtes d'avant**, montrées à part avec son nom, sans faire
+  attendre personne.
 - **Les add-ons des membres s'échangent leur journal de quêtes**, et chacun garde le dernier état connu des autres.
 - **Le mode Compagnie** remplace le suivi des quêtes du jeu par l'**avancement commun** : celui du membre le moins avancé,
   absents compris. Une quête n'est **à rendre** que quand tout le monde a fini.

@@ -217,6 +217,50 @@ c = ns.calculer({ { nom = "Virgile", niveau = 5, quetes = {} },
 assert(c.pierre == 0, "sa recharge est finie depuis : prête")
 assert(ns.calculer({ { nom = "Virgile", niveau = 5, quetes = {} }, { nom = "Léo" } }, 9000).pierre == 0, "jamais entendu : prête")
 
+-- Quêtes d'avant (#20) : fondée en cours d'aventure, chacun arrive avec les restes de sa zone de départ. Elles sont à
+-- part (nommées, avec l'avancement de qui l'a), sans écart, et ne font attendre personne.
+local TELDRASSIL, COMTE = 2002, 2001 -- à part : triées par quête
+c = ns.calculer({
+  { nom = "Virgile", niveau = 12, quetes = { [COMTE] = kobolds(true) }, avant = { [COMTE] = true } },
+  { nom = "Léo", niveau = 13, quetes = { [TELDRASSIL] = pattes(8) }, avant = { [TELDRASSIL] = true } },
+})
+assert(next(c.quetes) == nil, "journaux différents : aucune quête de la Compagnie")
+assert(#c.aFaire == 0, "aucun écart (ni à partager, ni en attente) : " .. #c.aFaire)
+assert(#c.aPart == 2, "deux quêtes à part : " .. #c.aPart)
+local a = c.aPart[2]
+assert(a.quete == TELDRASSIL and a.membre == "Léo" and a.aRendre, "la quête de Léo est à part, À rendre sans attendre Virgile")
+assert(a.objectifs[1].fait == 8, "avec l'avancement de Léo")
+assert(c.aPart[1].quete == COMTE and c.aPart[1].membre == "Virgile" and not c.aPart[1].aRendre, "celle de Virgile")
+-- Une quête d'avant que tous les membres ont redevient une quête de la Compagnie (même zone de départ).
+c = ns.calculer({
+  { nom = "Virgile", niveau = 12, quetes = { [COMTE] = pattes(8) }, avant = { [COMTE] = true } },
+  { nom = "Léo", niveau = 12, quetes = { [COMTE] = pattes(3) } },
+})
+assert(c.quetes[COMTE] and c.quetes[COMTE].objectifs[1].fait == 3 and #c.aPart == 0, "tous l'ont : commune, 3/8")
+-- Mira (jamais entendue) ne l'a pas : elle reste à part.
+c = ns.calculer({
+  { nom = "Virgile", niveau = 12, quetes = { [COMTE] = pattes(8) }, avant = { [COMTE] = true } },
+  { nom = "Léo", niveau = 12, quetes = { [COMTE] = pattes(3) } }, { nom = "Mira" },
+})
+assert(not c.quetes[COMTE] and #c.aPart == 2, "pas tous : à part, chez chacun qui l'a")
+-- Une quête en avance ne compte que pour une remise vue après l'entrée : Léo a rendu COMTE avant (renduesAvant), il
+-- ne retient pas la Compagnie et rien n'est en avance ; rendue après (rendues) : en avance.
+c = ns.calculer({
+  { nom = "Virgile", niveau = 12, quetes = { [COMTE] = pattes(8) } },
+  { nom = "Léo", niveau = 12, quetes = {}, renduesAvant = { [COMTE] = true } },
+})
+assert(#c.aFaire == 0, "rendue avant l'entrée : pas en avance")
+assert(c.quetes[COMTE].aRendre, "et Léo ne retient pas la Compagnie")
+c = ns.calculer({
+  { nom = "Virgile", niveau = 12, quetes = { [COMTE] = pattes(5) } },
+  { nom = "Léo", niveau = 12, quetes = {}, rendues = { [COMTE] = true } },
+})
+seul(c.aFaire, "avance", "Virgile", COMTE)
+-- Rendue avant l'entrée : pas à partager à Léo non plus.
+c = ns.calculer({ { nom = "Virgile", niveau = 5, quetes = { [KOBOLDS] = kobolds(true) } },
+  { nom = "Léo", niveau = 5, quetes = {}, renduesAvant = { [KOBOLDS] = true } } })
+assert(#c.aFaire == 0, "déjà faite par Léo avant l'entrée : rien à partager")
+
 print("Compagnie : calcul de la Compagnie OK")
 
 -- Les membres (Membres.lua) : fonder, accepter, refuser, quitter, retirer, sans l'API du jeu, sous la même garde.
@@ -252,6 +296,7 @@ local function client(moi, guids)
     dire = function(texte) cl.dits[#cl.dits + 1] = texte end,
     proposer = function() cl.propositions = cl.propositions + 1 end,
     maj = function() cl.maj = cl.maj + 1 end,
+    entrer = function() cl.entrees = (cl.entrees or 0) + 1 end,
   }
   return cl
 end
@@ -297,6 +342,8 @@ assert(noms(c[L]) == "Virgile Marteau,Léo Lame", "chez Léo : " .. noms(c[L]))
 assert(c[M].e.db.compagnie == nil, "Mira a refusé : pas membre")
 assert(c[V].e.db.compagnie.id == "id1" and c[L].e.db.compagnie.id == "id1", "même Compagnie chez les deux")
 assert(c[L].maj > 0, "la liste de Léo est redessinée")
+-- L'entrée dans la Compagnie (#20) : chacun note ses quêtes d'avant, une fois ; pas Mira, qui a refusé.
+assert(c[V].entrees == 1 and c[L].entrees == 1 and not c[M].entrees, "entrée notée chez le fondateur et chez Léo")
 
 -- Déjà membre : il ne peut pas en fonder une autre, et une proposition reçue le dit (refus envoyé tout seul).
 ok, raison = ns.fonder(c[L].e, L, c[L].groupe, "id2", c[L].io)
@@ -452,14 +499,14 @@ local etat = {
     [95789] = { finie = false, objectifs = { { fait = 0, total = 1 } } },
   },
   rendues = { [1453] = true, [97331] = true },
-  abandonnees = {},
+  abandonnees = {}, avant = {}, renduesAvant = {},
 }
 local corps = ns.encoder(etat)
 assert(type(corps) == "string" and not corps:find("[|\n]"), "un texte simple : " .. tostring(corps))
 assert(pareil(ns.decoder(corps), etat), "encodage puis décodage : identique (" .. corps .. ")")
 assert(ns.encoder(ns.decoder(corps)) == corps, "le même état s'encode toujours pareil (ordre fixe)")
 assert(pareil(ns.decoder(ns.encoder({ niveau = 1, quetes = {}, rendues = {} })),
-  { niveau = 1, quetes = {}, rendues = {}, abandonnees = {} }), "état vide")
+  { niveau = 1, quetes = {}, rendues = {}, abandonnees = {}, avant = {}, renduesAvant = {} }), "état vide")
 -- Le texte des objectifs n'est jamais envoyé (code de grammaire du jeu « |4… ; ») : seulement les nombres.
 local avecTexte = { niveau = 12, quetes = { [7] = { finie = false, objectifs = {
   { texte = "Raptor flagellant : 2/10 |4personnage tué:personnages tués;", fait = 2, total = 10 } } } }, rendues = {} }
@@ -474,38 +521,51 @@ for _, mauvais in ipairs({ "", "x", "35", "35#", "35##", "35#1:0#", "35#1:0##", 
   "os.exit()", "35#1:0##;os.exit()##", "35#1:0###x", "35#1:0###1,,2", "35#1:0###-1", "35#1:0###0",
   "35#1:0###" .. ("1,"):rep(300) .. "1" }) do
   assert(ns.decoder(mauvais) == nil, "rejeté : " .. mauvais:sub(1, 40))
-  assert(ns.decoder(mauvais .. "###") == nil, "rejeté avec le foyer : " .. mauvais:sub(1, 40))
+  assert(ns.decoder(mauvais .. "#####") == nil, "rejeté avec le foyer et les quêtes d'avant : " .. mauvais:sub(1, 40))
 end
--- Un état à cinq champs (celui de #5, sans foyer) est rejeté (#9).
-assert(ns.decoder("35#1:0####") == nil and ns.decoder("35#1:0######"), "cinq champs : rejeté ; huit : lu")
+-- Un état à cinq champs (celui de #5, sans foyer) est rejeté (#9) ; à huit (celui de #9, sans quêtes d'avant) aussi (#20).
+assert(ns.decoder("35#1:0####") == nil and ns.decoder("35#1:0######") == nil and ns.decoder("35#1:0########"),
+  "cinq et huit champs : rejeté ; dix : lu")
+
+-- Les quêtes d'avant et les quêtes rendues avant l'entrée (#20) partent avec l'état : encodage puis décodage → identique.
+local avecAvant = { niveau = 14, quetes = { [PATTES] = { finie = false, objectifs = {} }, [2002] = { finie = true, objectifs = {} } },
+  avant = { [2002] = true }, rendues = { [1453] = true }, renduesAvant = { [783] = true, [95790] = true }, abandonnees = {} }
+corps = ns.encoder(avecAvant)
+assert(corps:find("#2002#783,95790$"), "quêtes d'avant, puis rendues avant l'entrée, triées : " .. corps)
+assert(pareil(ns.decoder(corps), avecAvant), "avec quêtes d'avant : identique (" .. corps .. ")")
+-- Une quête d'avant qui n'est plus dans le journal ne part pas ; reçue, elle fait rejeter l'état.
+assert(ns.encoder({ niveau = 2, quetes = {}, avant = { [9] = true } }) == "2#########", "quête d'avant hors du journal : ne part pas")
+for _, mauvais in ipairs({ "35#1:0#######2#", "35#1:0#######x#", "35#1:0#######1,1#", "35#1:0########0", "35#1:0########1,,2" }) do
+  assert(ns.decoder(mauvais) == nil, "rejeté : " .. mauvais)
+end
 
 -- Les questID sont bornés à 2147483647 (un entier 32 bits signé, comme le jeu).
-assert(ns.decoder("35#2147483647:0#2147483647##2147483647###").quetes[2147483647], "2147483647 : accepté")
-assert(ns.decoder("35#2147483648:0######") == nil and ns.decoder("35##2147483648#####") == nil and
-  ns.decoder("35####2147483648###") == nil, "au-delà : rejeté")
+assert(ns.decoder("35#2147483647:0#2147483647##2147483647####2147483647#2147483647").quetes[2147483647], "2147483647 : accepté")
+assert(ns.decoder("35#2147483648:0########") == nil and ns.decoder("35##2147483648#######") == nil and
+  ns.decoder("35####2147483648#####") == nil and ns.decoder("35#########2147483648") == nil, "au-delà : rejeté")
 
 -- Les quêtes abandonnées récemment (#5) partent avec l'état : encodage puis décodage → identique.
 local avecAbandons = { niveau = 12, quetes = { [PATTES] = { finie = false, objectifs = {} } }, rendues = { [1453] = true },
-  abandonnees = { [783] = true, [95790] = true } }
+  abandonnees = { [783] = true, [95790] = true }, avant = {}, renduesAvant = {} }
 corps = ns.encoder(avecAbandons)
-assert(corps:find("#783,95790###$"), "abandons triés, puis le foyer (vide) : " .. corps)
+assert(corps:find("#783,95790#####$"), "abandons triés, puis le foyer (vide) : " .. corps)
 assert(pareil(ns.decoder(corps), avecAbandons), "avec abandons : identique (" .. corps .. ")")
 -- Le foyer (#9) part avec l'état : auberge, heure de la liaison, heure où la pierre est prête → identique.
-local avecFoyer = { niveau = 12, quetes = {}, rendues = {}, abandonnees = {}, auberge = "Comté-de-l'Or", liaison = 1763990000,
+local avecFoyer = { niveau = 12, quetes = {}, rendues = {}, abandonnees = {}, avant = {}, renduesAvant = {}, auberge = "Comté-de-l'Or", liaison = 1763990000,
   finRecharge = 1764002400 }
 corps = ns.encoder(avecFoyer)
-assert(corps == "12#####Comté-de-l'Or#1763990000#1764002400", corps)
+assert(corps == "12#####Comté-de-l'Or#1763990000#1764002400##", corps)
 assert(pareil(ns.decoder(corps), avecFoyer), "avec foyer : identique")
 -- Mal formé : tout l'état est rejeté (auberge comme une zone ; heures entières, positives, 32 bits).
 for _, f in ipairs({ "a|b#1#1", ("x"):rep(49) .. "#1#1", "a;b##", "Or#x#", "Or#0#", "Or##-1", "Or##2147483648", "Or#1.5#" }) do
-  assert(ns.decoder("12#####" .. f) == nil, "foyer rejeté : " .. f:sub(1, 20))
+  assert(ns.decoder("12#####" .. f .. "##") == nil, "foyer rejeté : " .. f:sub(1, 20))
 end
 -- « partageable » (lu dans mon journal) ne part pas.
-assert(ns.encoder({ niveau = 2, quetes = { [7] = { finie = false, objectifs = {}, partageable = true } } }) == "2#7:0######",
+assert(ns.encoder({ niveau = 2, quetes = { [7] = { finie = false, objectifs = {}, partageable = true } } }) == "2#7:0########",
   "partageable ne part pas")
 
 -- La zone de chaque quête (#13 : l'en-tête de zone de mon journal) part avec l'état : encodage puis décodage → identique.
-local avecZones = { niveau = 35, rendues = { [1453] = true }, abandonnees = {}, quetes = {
+local avecZones = { niveau = 35, rendues = { [1453] = true }, abandonnees = {}, avant = {}, renduesAvant = {}, quetes = {
   [PATTES] = { finie = false, objectifs = { { fait = 5, total = 8 } }, zone = "Forêt d'Elwynn" },
   [CHASSE] = { finie = true, objectifs = {}, zone = "Marche de l'Ouest" },
   [95789] = { finie = false, objectifs = { { fait = 0, total = 1 } }, zone = "Forêt d'Elwynn" },
@@ -515,19 +575,19 @@ corps = ns.encoder(avecZones)
 assert(pareil(ns.decoder(corps), avecZones), "avec zones : identique (" .. corps .. ")")
 assert(ns.encoder(ns.decoder(corps)) == corps, "avec zones : toujours encodé pareil")
 -- Un état sans zone est accepté (champ des zones vide).
-local sansZone = assert(ns.decoder("35#1001:0:5/8;659:0#1453#####"), "sans zone : accepté")
+local sansZone = assert(ns.decoder("35#1001:0:5/8;659:0#1453#######"), "sans zone : accepté")
 assert(sansZone.quetes[1001].zone == nil and sansZone.quetes[1001].objectifs[1].fait == 5, "…ses quêtes sans zone")
 -- Une zone mal formée fait rejeter tout l'état : vide, trop longue, caractère de contrôle, « | » (codes du chat), un
 -- séparateur du format ; une zone sans quête, une quête absente de l'état ou rangée deux fois, une zone répétée.
 for _, z in ipairs({ "", ("x"):rep(49), "a|cffff0000b", "a\nb", "a\1b", "a\0b", "a\127b", "a#b", "a;b", "a:b", "a,b",
   "a/b", "a=b" }) do
-  assert(ns.decoder("35#1001:0#1453#" .. z .. "=1001####") == nil, "zone rejetée : " .. z:sub(1, 20))
+  assert(ns.decoder("35#1001:0#1453#" .. z .. "=1001######") == nil, "zone rejetée : " .. z:sub(1, 20))
 end
-assert(ns.decoder("35#1001:0##" .. ("é"):rep(24) .. "=1001####"), "48 octets : acceptée")
+assert(ns.decoder("35#1001:0##" .. ("é"):rep(24) .. "=1001######"), "48 octets : acceptée")
 for _, mauvais in ipairs({ "35#1001:0##Elwynn#", "35#1001:0##Elwynn=#", "35#1001:0##Elwynn=x#", "35#1001:0##Elwynn=2002#",
   "35#1001:0##A=1001;B=1001#", "35#1001:0;1002:0##A=1001;A=1002#", "35#1001:0##A=1001,1001#", "35#1001:0##A=1001;#",
   "35#1001:0##A=1001##" }) do
-  assert(ns.decoder(mauvais .. "###") == nil, "rejeté : " .. mauvais)
+  assert(ns.decoder(mauvais .. "#####") == nil, "rejeté : " .. mauvais)
 end
 -- Mon journal peut avoir un en-tête que le format refuse : il ne part pas (la quête part sans zone), l'état reste lisible.
 local bizarre = { niveau = 5, rendues = {}, quetes = { [1] = { finie = false, objectifs = {}, zone = "a|b" },
@@ -544,7 +604,7 @@ assert(c.quetes[PATTES].zone == "Forêt d'Elwynn" and c.quetes[CHASSE].zone == "
 
 -- Un état part en morceaux de messages d'add-on bornés (255 octets) et se recompose chez un membre.
 local V2, L2, Z2 = "Player-1-0000000V", "Player-1-0000000L", "Player-1-0000000Z"
-local gros = { niveau = 40, quetes = {}, rendues = {}, abandonnees = {} }
+local gros = { niveau = 40, quetes = {}, rendues = {}, abandonnees = {}, avant = {}, renduesAvant = {} }
 for i = 1, 35 do gros.quetes[90000 + i] = { finie = false, objectifs = { { fait = 3, total = 10 }, { fait = 1, total = 12 } } } end
 for i = 1, 60 do gros.rendues[100000 + i] = true end
 local morceaux = ns.morceaux("id-1234567890", ns.encoder(gros), 7)
@@ -623,6 +683,9 @@ dbF.etats = { [L2] = avecFoyer }
 local lf = ns.membresDuCalcul(dbF, V2, { quetes = {} }, {})[2]
 assert(lf.auberge == "Comté-de-l'Or" and lf.finRecharge == 1764002400 and ns.corriger(lf, {}, function() end).liaison == 1763990000,
   "le foyer passe au calcul")
+dbF.etats = { [L2] = avecAvant }
+lf = ns.corriger(ns.membresDuCalcul(dbF, V2, { quetes = {} }, {})[2], {}, function() end)
+assert(lf.avant[2002] and lf.renduesAvant[783], "les quêtes d'avant et les rendues avant l'entrée passent au calcul")
 
 -- Quand un membre est dans le groupe, IsUnitOnQuest corrige son état : une quête qu'il n'a plus est retirée, une quête
 -- qu'il a prise sans qu'on le sache compte à 0 ; une réponse inconnue (nil) ne change rien. Son état gardé n'est pas touché.

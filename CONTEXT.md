@@ -1,13 +1,13 @@
 # Compagnie — quêtes en groupe
 
-Une équipe fixe de personnages fait toute l'aventure ensemble, du niveau 1 à la fin, et ne fait que les quêtes ensemble ; l'add-on garde les journaux de quêtes alignés et dit quoi faire quand ils divergent.
+Une équipe fixe de personnages fait l'aventure ensemble à partir de sa fondation, et ne fait que les quêtes ensemble ; l'add-on garde les journaux de quêtes alignés et dit quoi faire quand ils divergent.
 
 ## Language
 
 ### Qui
 
 **Compagnie**:
-Une équipe fixe et durable de personnages qui commencent l'aventure ensemble au niveau 1 ; elle existe aussi quand certains membres sont hors ligne.
+Une équipe fixe et durable de personnages qui font l'aventure ensemble à partir de sa fondation, à n'importe quel niveau, races différentes comprises (même faction : le jeu l'impose pour grouper) ; elle existe aussi quand certains membres sont hors ligne.
 _Avoid_: groupe (réservé au groupe du jeu), équipe, guilde, party
 
 **Membre**:
@@ -28,6 +28,10 @@ _Avoid_: cache, copie
 Une différence entre les journaux de quêtes des membres, qui demande une action pour être résorbée.
 _Avoid_: désynchro, divergence
 
+**Quête d'avant**:
+Une quête qu'un membre avait dans son journal en entrant dans la Compagnie (les restes de sa zone de départ) : à lui, affichée chez tous à part, avec son nom et son avancement, comme une quête personnelle ; elle ne crée aucun écart et ne fait attendre personne. Si tous les membres l'ont, elle redevient une quête de la Compagnie ; elle disparaît quand il la rend ou l'abandonne.
+_Avoid_: ancienne quête, quête héritée
+
 **Quête à partager**:
 Écart où un membre a une quête que d'autres n'ont pas, et que le jeu permet de partager.
 
@@ -40,7 +44,7 @@ _Avoid_: quête non partageable
 _Avoid_: quête ignorée, quête refusée
 
 **Quête en avance**:
-Écart où un membre a rendu, ou s'apprête à rendre, une quête dont l'avancement commun n'est pas complet ; l'add-on avertit, il ne bloque pas. Avant : un bandeau sous la fenêtre de remise du jeu (« La Compagnie n'a pas fini : 5/8 »), le bouton du jeu intact. Après : chez chaque membre qui l'a encore sans l'avoir finie, « Rendue en avance », sans nommer qui l'a rendue ; résorbée quand il l'a finie.
+Écart où un membre a rendu, ou s'apprête à rendre, une quête dont l'avancement commun n'est pas complet ; l'add-on avertit, il ne bloque pas. Seule compte une remise que l'add-on du membre a vue après son entrée dans la Compagnie : ce qu'il a rendu avant n'est jamais en avance. Avant : un bandeau sous la fenêtre de remise du jeu (« La Compagnie n'a pas fini : 5/8 »), le bouton du jeu intact. Après : chez chaque membre qui l'a encore sans l'avoir finie, « Rendue en avance », sans nommer qui l'a rendue ; résorbée quand il l'a finie.
 _Avoid_: remise anticipée
 
 **Niveau insuffisant**:
@@ -99,8 +103,8 @@ _Avoid_: exclure, kick
 
 - Une **Compagnie** a de 2 à 5 membres ; un **Membre** n'appartient qu'à une **Compagnie**.
 - L'**avancement commun** compte tous les membres ; un **absent** compte avec son dernier état connu, donc une quête n'est jamais **à rendre** sans lui.
-- Les quêtes de la **Compagnie** sont celles que ses membres prennent ; l'add-on ne choisit pas les quêtes (le guide viendra avec le **chemin de synchronisation**).
-- Une **quête personnelle** n'entre pas dans l'**avancement commun** des autres.
+- Les quêtes de la **Compagnie** sont celles que ses membres prennent, sauf les **quêtes d'avant** ; l'add-on ne choisit pas les quêtes (le guide viendra avec le **chemin de synchronisation**).
+- Une **quête personnelle** ou une **quête d'avant** n'entre pas dans l'**avancement commun** des autres.
 
 ## Example dialogue
 

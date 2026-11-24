@@ -3,7 +3,8 @@
 --   e      : l'état { db = CompagnieDB, proposition = celle reçue, fondation = la mienne en cours }
 --   moi    : mon GUID
 --   groupe : les personnages connectés de mon groupe du jeu, moi d'abord : { { guid, nom }, … } (donnés par le serveur)
---   io     : { envoyer = fn(texte) au groupe du jeu, dire = fn(texte) au joueur, proposer = fn(proposition), maj = fn() }
+--   io     : { envoyer = fn(texte) au groupe du jeu, dire = fn(texte) au joueur, proposer = fn(proposition), maj = fn(),
+--              entrer = fn() : je deviens membre (fondation), mes quêtes d'avant sont notées (#20) }
 -- La Compagnie (donnée propre) : db.compagnie = { id, membres = { { guid, nom }, … } }, de 2 à 5 membres.
 -- Messages d'add-on, envoyés au groupe du jeu (jamais chuchotés) : « verbe;id[;GUID,GUID…] »
 --   P;id;liste  proposition, le fondateur d'abord     A;id  j'accepte
@@ -78,6 +79,7 @@ function ns.cloturer(e, moi, groupe, io)
   for i = 2, #f.guids do if f.reponses[f.guids[i]] == "A" then guids[#guids + 1] = f.guids[i] end end
   if #guids < 2 then return io.dire("Personne n'a accepté : pas de Compagnie.") end
   e.db.compagnie = { id = f.id, membres = membres(guids, groupe) }
+  io.entrer()
   io.envoyer("F;" .. f.id .. ";" .. table.concat(guids, ","))
   io.dire("Compagnie fondée : " .. noms(e.db.compagnie) .. ".")
   io.maj()
@@ -173,6 +175,7 @@ function ns.recevoir(e, moi, groupe, de, texte, io)
     if c or not (p and p.id == id and p.de == de and p.accepte) or not index(guids, moi) then return end
     e.proposition = nil
     e.db.compagnie = { id = id, membres = membres(guids, groupe) }
+    io.entrer()
     io.dire("Compagnie fondée : " .. noms(e.db.compagnie) .. ".")
     io.maj()
   elseif verbe == "Q" or verbe == "X" then
