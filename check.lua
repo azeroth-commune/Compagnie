@@ -232,18 +232,31 @@ local a = c.aPart[2]
 assert(a.quete == TELDRASSIL and a.membre == "Léo" and a.aRendre, "la quête de Léo est à part, À rendre sans attendre Virgile")
 assert(a.objectifs[1].fait == 8, "avec l'avancement de Léo")
 assert(c.aPart[1].quete == COMTE and c.aPart[1].membre == "Virgile" and not c.aPart[1].aRendre, "celle de Virgile")
--- Une quête d'avant que tous les membres ont redevient une quête de la Compagnie (même zone de départ).
+-- Une quête d'avant que tous les membres ont (d'avant chez chacun) redevient une quête de la Compagnie (même zone de départ).
 c = ns.calculer({
   { nom = "Virgile", niveau = 12, quetes = { [COMTE] = pattes(8) }, avant = { [COMTE] = true } },
-  { nom = "Léo", niveau = 12, quetes = { [COMTE] = pattes(3) } },
+  { nom = "Léo", niveau = 12, quetes = { [COMTE] = pattes(3) }, avant = { [COMTE] = true } },
 })
 assert(c.quetes[COMTE] and c.quetes[COMTE].objectifs[1].fait == 3 and #c.aPart == 0, "tous l'ont : commune, 3/8")
 -- Mira (jamais entendue) ne l'a pas : elle reste à part.
 c = ns.calculer({
   { nom = "Virgile", niveau = 12, quetes = { [COMTE] = pattes(8) }, avant = { [COMTE] = true } },
-  { nom = "Léo", niveau = 12, quetes = { [COMTE] = pattes(3) } }, { nom = "Mira" },
+  { nom = "Léo", niveau = 12, quetes = { [COMTE] = pattes(3) }, avant = { [COMTE] = true } }, { nom = "Mira" },
 })
-assert(not c.quetes[COMTE] and #c.aPart == 2, "pas tous : à part, chez chacun qui l'a")
+assert(not c.quetes[COMTE] and #c.aPart == 2, "d'avant chez tous ceux qui l'ont, pas tous : à part, chez chacun qui l'a")
+-- Une quête d'avant chez Virgile, que Léo a prise après la fondation : de la Compagnie ; Mira, qui ne l'a pas, la reçoit
+-- par « Partager » de qui peut la partager (Virgile : le jeu ne dit « partageable » que pour mes quêtes).
+c = ns.calculer({
+  { nom = "Virgile", niveau = 12, quetes = { [COMTE] = { finie = false, objectifs = { { fait = 6, total = 8 } }, partageable = true } },
+    avant = { [COMTE] = true } },
+  { nom = "Léo", niveau = 12, quetes = { [COMTE] = pattes(2) } },
+  { nom = "Mira", niveau = 12, quetes = {} },
+})
+assert(c.quetes[COMTE] and #c.aPart == 0, "prise après la fondation par Léo : de la Compagnie")
+assert(c.quetes[COMTE].objectifs[1].fait == 0 and table.concat(c.quetes[COMTE].enAttente, ",") == "Virgile,Léo,Mira",
+  "la quête d'avant de Virgile compte normalement, Mira à 0")
+x = seul(c.aFaire, "partager", "Virgile", COMTE)
+assert(#x.manquants == 1 and x.manquants[1] == "Mira", "Mira reçoit « Partager »")
 -- Une quête en avance ne compte que pour une remise vue après l'entrée : Léo a rendu COMTE avant (renduesAvant), il
 -- ne retient pas la Compagnie et rien n'est en avance ; rendue après (rendues) : en avance.
 c = ns.calculer({
@@ -560,13 +573,48 @@ for _, f in ipairs({ "783", "783:1:1", "783:2:1:Léo", "783:1:0:Léo", "783:1:x:
   "783:1:1:Léo;783:0:2:Léo", "783:1:1:Léo;", "783:1:1:Léo:1" }) do
   assert(ns.decoder("12#####" .. f .. "#####") == nil, "écartée rejetée : " .. f)
 end
--- Au-delà de 50 décisions, seules les 50 plus récentes partent (l'état reste lisible).
+-- Au-delà de 30 décisions, seules les 30 plus récentes partent (l'état reste lisible).
 local beaucoup = { niveau = 5, quetes = {}, ecartees = {} }
-for i = 1, 60 do beaucoup.ecartees[i] = { ecartee = true, date = 1000 + i, par = "Léo" } end
-lu = assert(ns.decoder(ns.encoder(beaucoup)), "60 décisions : lisible")
-local n = 0
-for _ in pairs(lu.ecartees) do n = n + 1 end
-assert(n == 50 and lu.ecartees[60] and not lu.ecartees[10], "les 50 plus récentes : " .. n)
+for i = 1, 40 do beaucoup.ecartees[i] = { ecartee = true, date = 1000 + i, par = "Léo" } end
+lu = assert(ns.decoder(ns.encoder(beaucoup)), "40 décisions : lisible")
+local function compter(t) local n = 0 for _ in pairs(t) do n = n + 1 end return n end
+assert(compter(lu.ecartees) == 30 and lu.ecartees[40] and lu.ecartees[11] and not lu.ecartees[10],
+  "les 30 plus récentes : " .. compter(lu.ecartees))
+-- Une remise récente ne pousse pas dehors une écartée plus ancienne : les écartées partent d'abord.
+for i = 1, 30 do beaucoup.ecartees[i] = { ecartee = true, date = 1000 + i, par = "Léo" } end
+for i = 31, 40 do beaucoup.ecartees[i] = nil end
+beaucoup.ecartees[99] = { ecartee = false, date = 5000, par = "Mira" }
+lu = ns.decoder(ns.encoder(beaucoup))
+assert(compter(lu.ecartees) == 30 and lu.ecartees[1] and not lu.ecartees[99], "les 30 écartées partent, pas la remise")
+-- Plus de 30 décisions reçues : l'état est rejeté.
+local trente1 = {}
+for i = 1, 31 do trente1[i] = i .. ":1:1:Léo" end
+assert(ns.decoder("5####" .. table.concat(trente1, ";") .. "#####") == nil, "31 décisions reçues : rejeté")
+-- Une décision datée de plus d'un jour après mon heure serveur fait rejeter l'état (elle l'emporterait pour toujours).
+local futur = "5####783:1:" .. (100000 + 86401) .. ":Léo#####"
+assert(ns.decoder(futur, 100000) == nil and ns.decoder("5####783:1:" .. (100000 + 86400) .. ":Léo#####", 100000),
+  "plus d'un jour dans le futur : rejeté ; un jour : lu")
+
+-- Le pire cas réaliste tient dans MAX_MORCEAUX (10) : un journal plein (25 quêtes de 1 à 3 objectifs, 8 zones), 30
+-- décisions (dont 10 remises) signées de prénoms longs, 10 quêtes d'avant, 10 quêtes des autres rendues depuis l'entrée
+-- et 10 avant ; l'id de la Compagnie est celui de Compagnie.lua (GUID et heure serveur). Le texte des objectifs ne part pas.
+local ZONES = { "Contreforts de Hautebrande", "Marche de l'Ouest", "Forêt d'Elwynn", "Les Carmines", "Bois de la Pénombre",
+  "Loch Modan", "Les Paluns", "Vallée de Strangleronce" }
+local OBJECTIFS = { { texte = "Raptor flagellant : 12/15 |4personnage tué:personnages tués;", fait = 12, total = 15 },
+  { texte = "Croc de raptor : 9/10", fait = 9, total = 10 }, { texte = "Sauvetage de Kernobee", fait = 0, total = 1 } }
+local plein = { niveau = 60, quetes = {}, rendues = {}, renduesAvant = {}, avant = {}, ecartees = {}, auberge = "Comté-de-l'Or",
+  liaison = 1764000000, finRecharge = 1764003600 }
+for i = 1, 25 do
+  local o = {}
+  for k = 1, i % 3 + 1 do o[k] = OBJECTIFS[k] end
+  plein.quetes[90000 + i] = { finie = false, zone = ZONES[i % 8 + 1], objectifs = o }
+end
+for i = 1, 10 do plein.avant[90000 + i] = true; plein.rendues[91000 + i] = true; plein.renduesAvant[92000 + i] = true end
+for i = 1, 30 do plein.ecartees[93000 + i] = { ecartee = i % 3 > 0, date = 1764000000 + i, par = i % 2 == 0 and "Éléonorette" or "Virgile" } end
+local idC = "Player-4395-0A1B2C3D-1764000000"
+local parts = ns.morceaux(idC, ns.encoder(plein), 99)
+assert(#parts >= 1 and #parts <= 10, "le pire cas réaliste tient : " .. #parts .. " morceaux, " .. #ns.encoder(plein) .. " octets")
+print(("Compagnie : pire cas réaliste, %d octets, %d morceaux sur 10"):format(#ns.encoder(plein), #parts))
 
 -- Écarter, Remettre (#21) : une décision datée de la Compagnie. Les décisions reçues avec un état : la plus récente
 -- l'emporte, quête par quête ; fusionner rend celles qui ont changé (pour le message dans le chat).
@@ -581,6 +629,22 @@ assert(not dbE.ecartees[PATTES].ecartee and dbE.ecartees[PATTES].par == "Léo", 
 assert(#ns.fusionner(dbE, { [PATTES] = { ecartee = false, date = 120, par = "Léo" } }) == 0, "la même décision : rien de nouveau")
 ns.decider(dbE, PATTES, true, "Virgile", 130)
 assert(dbE.ecartees[PATTES].ecartee, "écartée de nouveau")
+-- À la même seconde, écarter l'emporte sur remettre, dans les deux sens.
+assert(#ns.fusionner(dbE, { [PATTES] = { ecartee = false, date = 130, par = "Léo" } }) == 0 and dbE.ecartees[PATTES].ecartee,
+  "même seconde : la remise ne l'emporte pas sur l'écartée")
+ns.decider(dbE, PATTES, false, "Virgile", 140)
+assert(#ns.fusionner(dbE, { [PATTES] = { ecartee = true, date = 140, par = "Léo" } }) == 1 and dbE.ecartees[PATTES].ecartee,
+  "même seconde : l'écartée l'emporte sur la remise")
+-- Une remise reçue n'est annoncée que si je connaissais la quête écartée ; gardée quand même.
+changees = ns.fusionner(dbE, { [KOBOLDS] = { ecartee = false, date = 150, par = "Léo" } })
+assert(#changees == 0 and dbE.ecartees[KOBOLDS] and not dbE.ecartees[KOBOLDS].ecartee, "remise d'une quête inconnue : pas annoncée")
+changees = ns.fusionner(dbE, { [PATTES] = { ecartee = false, date = 160, par = "Léo" } })
+assert(#changees == 1 and changees[1].ecartee == false, "remise d'une quête que je savais écartée : annoncée")
+-- Les remises de plus de 7 jours sont oubliées ; une écartée reste, si vieille soit-elle.
+local dbP = { ecartees = { [1] = { ecartee = false, date = 1000, par = "Léo" }, [2] = { ecartee = false, date = 1000 + 86400, par = "Léo" },
+  [3] = { ecartee = true, date = 1, par = "Léo" } } }
+ns.purger(dbP, 1001 + 7 * 86400)
+assert(not dbP.ecartees[1] and dbP.ecartees[2] and dbP.ecartees[3], "remise de plus de 7 jours oubliée, écartée gardée")
 -- Le foyer (#9) part avec l'état : auberge, heure de la liaison, heure où la pierre est prête → identique.
 local avecFoyer = { niveau = 12, quetes = {}, rendues = {}, ecartees = {}, avant = {}, renduesAvant = {}, auberge = "Comté-de-l'Or", liaison = 1763990000,
   finRecharge = 1764002400 }
@@ -649,7 +713,8 @@ end
 local recus = {}
 local function ioRecu() return { maj = function() recus.maj = (recus.maj or 0) + 1 end,
   annoncer = function(t) recus.annonces = t end,
-  demande = function(de) recus.demande = de end, maintenant = function() return recus.t or 1000 end } end
+  demande = function(de) recus.demande = de end, maintenant = function() return recus.t or 1000 end,
+  heure = function() return 1764000000 end } end
 local chezV = compagnieDe(V2)
 for _, m in ipairs(morceaux) do ns.recevoirEtat(chezV, L2, m, ioRecu()) end
 assert(pareil(chezV.db.etats[L2], gros), "l'état de Léo est recomposé et gardé comme dernier état connu")
@@ -658,7 +723,7 @@ assert(recus.maj and recus.maj > 0, "le suivi est redessiné")
 recus.annonces = nil
 for _, m in ipairs(ns.morceaux("id-1234567890", ns.encoder(avecEcartees), 9)) do ns.recevoirEtat(chezV, L2, m, ioRecu()) end
 assert(chezV.db.ecartees[783].ecartee and chezV.db.ecartees[783].par == "Léo", "la décision de Léo est celle de la Compagnie")
-assert(recus.annonces and #recus.annonces == 2 and recus.annonces[1].quete == 783, "annoncées dans le chat")
+assert(recus.annonces and #recus.annonces == 1 and recus.annonces[1].quete == 783, "l'écartée annoncée, pas la remise d'une quête inconnue")
 recus.annonces = nil
 for _, m in ipairs(ns.morceaux("id-1234567890", ns.encoder(avecEcartees), 10)) do ns.recevoirEtat(chezV, L2, m, ioRecu()) end
 assert(recus.annonces == nil, "reçues de nouveau : rien à annoncer")
@@ -773,10 +838,26 @@ refuse = false
 ns.signaler(e2, false, ioEnvoi)
 table.remove(programmes, 1).fn()
 assert(#partis == 3, "le même état repart : " .. #partis)
+-- Un état qui ne tient pas dans MAX_MORCEAUX : rien ne part (jamais un état tronqué), et c'est dit une fois.
+local trop = 0
+ioEnvoi.trop = function() trop = trop + 1 end
+local enorme = { niveau = 11, quetes = {}, rendues = {} }
+for i = 1, 120 do enorme.quetes[90000 + i] = { finie = false, objectifs = { { fait = 1, total = 2 }, { fait = 1, total = 2 } }, zone = "Zone " .. i } end
+monEtat = enorme
+for _ = 1, 3 do ns.signaler(e2, true, ioEnvoi); table.remove(programmes, 1).fn() end
+assert(#partis == 3 and trop == 1, "trop gros : rien ne part, dit une fois (" .. trop .. ")")
+monEtat = { niveau = 12, quetes = {}, rendues = {} }
+ns.signaler(e2, false, ioEnvoi)
+table.remove(programmes, 1).fn()
+assert(#partis == 4, "de nouveau petit : il part")
+monEtat = enorme
+ns.signaler(e2, false, ioEnvoi)
+table.remove(programmes, 1).fn()
+assert(trop == 2, "trop gros de nouveau : redit")
 -- Sans Compagnie, rien ne part.
 local e3 = { db = {} }
 ns.signaler(e3, true, ioEnvoi)
 table.remove(programmes, 1).fn()
-assert(#partis == 3, "sans Compagnie : rien")
+assert(#partis == 4, "sans Compagnie : rien")
 
 print("Compagnie : états de la Compagnie OK")

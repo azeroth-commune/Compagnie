@@ -14,7 +14,9 @@
 -- séparateur du format ; un en-tête de mon journal qui ne l'est pas ne part pas (la quête part sans zone). Le 5e champ
 -- (#21) : les décisions de la Compagnie sur les quêtes écartées, telles que je les connais, « id:1|0:date:par » (1 :
 -- écartée, 0 : remise ; date : heure serveur ; par : le prénom de qui l'a décidé, mêmes règles qu'une zone), ids triés ;
--- au plus MAX_ECARTEES, les plus récentes. « partageable » ne part pas (le jeu
+-- au plus MAX_ECARTEES : les écartées d'abord (une remise récente ne pousse jamais dehors une écartée), puis les plus
+-- récentes ; reçue, une décision datée de plus d'un jour après mon heure serveur fait rejeter l'état (elle
+-- l'emporterait pour toujours). « partageable » ne part pas (le jeu
 -- ne le dit que pour mes quêtes). Les 6e à 8e champs (#9) : l'auberge liée (mêmes règles qu'une zone), l'heure serveur
 -- (GetServerTime) de la liaison et celle où la pierre de foyer sera prête ; chacun vide quand il est inconnu (ou la
 -- pierre prête). Une heure et non une durée : un absent compte avec sa recharge recalculée depuis son envoi.
@@ -27,7 +29,8 @@
 local _, ns = ...
 local MAX_QUETES, MAX_OBJECTIFS, MAX_RENDUES, MAX_MORCEAUX, DEBIT = 60, 20, 300, 10, 60 -- DEBIT : messages / minute
 local MAX_ZONE = 48 -- octets : « Contreforts de Hautebrande » en fait 26
-local MAX_ECARTEES = 50
+local MAX_ECARTEES = 30 -- un journal plein (25 quêtes) + 30 décisions tient dans MAX_MORCEAUX (check.lua)
+local AVENIR, OUBLI = 86400, 7 * 86400 -- secondes : une décision à plus d'un jour est rejetée ; une remise oubliée à 7 jours
 ns.DELAI_ENVOI = 3 -- secondes : une rafale d'événements part en un seul envoi
 
 -- Les morceaux de s séparés par sep (un caractère), vides compris.
@@ -66,7 +69,10 @@ function ns.encoder(etat)
   for _, id in ipairs(trier(etat.rendues)) do rendues[#rendues + 1] = id end
   local decisions, ecartees = {}, {}
   for id, d in pairs(etat.ecartees or {}) do decisions[#decisions + 1] = { id = id, d = d } end
-  table.sort(decisions, function(a, b) return a.d.date > b.d.date end) -- ponytail: au-delà de MAX_ECARTEES, les plus anciennes ne partent plus
+  table.sort(decisions, function(a, b) -- les écartées d'abord, puis les plus récentes
+    if a.d.ecartee ~= b.d.ecartee then return a.d.ecartee end
+    return a.d.date > b.d.date
+  end) -- ponytail: au-delà de MAX_ECARTEES, les plus anciennes ne partent plus
   for i = #decisions, MAX_ECARTEES + 1, -1 do decisions[i] = nil end
   table.sort(decisions, function(a, b) return a.id < b.id end)
   for _, x in ipairs(decisions) do
@@ -82,8 +88,9 @@ function ns.encoder(etat)
     "#" .. table.concat(avant, ",") .. "#" .. table.concat(trier(etat.renduesAvant), ",")
 end
 
--- L'état, ou nil au moindre champ mal formé.
-function ns.decoder(corps)
+-- L'état, ou nil au moindre champ mal formé. maintenant : mon heure serveur (nil : pas de contrôle des dates, les tests
+-- du format).
+function ns.decoder(corps, maintenant)
   local f = couper(corps, "#")
   local niveau = #f == 10 and entier(f[1], 200)
   if not niveau or niveau < 1 then return end
@@ -109,7 +116,8 @@ function ns.decoder(corps)
     local c = couper(x, ":")
     local id, date = entier(c[1], 2147483647), entier(c[3] or "", 2147483647)
     if #c ~= 4 or not (id and id >= 1 and date and date >= 1) or etat.ecartees[id] or (c[2] ~= "0" and c[2] ~= "1")
-      or not zoneValide(c[4]) then return end
+      or not zoneValide(c[4]) or (maintenant and date > maintenant + AVENIR) then return end
+    -- ponytail: « par » n'est pas authentifié (un membre peut signer d'un autre prénom) ; seuls des membres sont lus.
     etat.ecartees[id] = { ecartee = c[2] == "1", date = date, par = c[4] }
   end
   for champ, ids in pairs({ [3] = etat.rendues, [9] = etat.avant, [10] = etat.renduesAvant }) do
@@ -150,13 +158,14 @@ end
 function ns.morceaux(id, corps, envoi)
   local taille = 255 - #("E;" .. id .. ";99/10/10;")
   local n, t = math.max(1, math.ceil(#corps / taille)), {}
-  if n > MAX_MORCEAUX then return t end -- ponytail: un journal plein tient en ~5 morceaux ; au-delà, rien ne part
+  if n > MAX_MORCEAUX then return t end -- un journal plein tient (check.lua) ; au-delà, rien ne part et ns.signaler le dit
   for i = 1, n do t[i] = ("E;%s;%d/%d/%d;%s"):format(id, envoi, i, n, corps:sub((i - 1) * taille + 1, i * taille)) end
   return t
 end
 
 -- Un message E ou D reçu de de (GUID). e = { db = CompagnieDB, moi = mon GUID } ; io = { maj = fn(), demande = fn(de),
--- maintenant = fn() -> secondes, annoncer = fn(décisions qui ont changé, voir ns.fusionner) }. Rend true si le message est un message d'état (traité ou ignoré).
+-- maintenant = fn() -> secondes (GetTime : le débit), heure = fn() -> heure serveur (les dates des décisions),
+-- annoncer = fn(décisions à annoncer, voir ns.fusionner) }. Rend true si le message est un message d'état (traité ou ignoré).
 function ns.recevoirEtat(e, de, texte, io)
   local verbe, id, reste = texte:match("^([ED]);([^;]+);?(.*)$")
   if not verbe then return false end
@@ -178,7 +187,7 @@ function ns.recevoirEtat(e, de, texte, io)
   b[i] = morceau
   if i < n then return true end
   e.tampons[de] = nil
-  local etat = ns.decoder(table.concat(b))
+  local etat = ns.decoder(table.concat(b), io.heure())
   if not etat then return true end
   e.db.etats = e.db.etats or {}
   e.db.etats[de] = etat -- le dernier état connu : une donnée propre, sauvegardée
@@ -196,7 +205,8 @@ function ns.decider(db, id, ecartee, par, date)
 end
 
 -- Les décisions reçues avec l'état d'un membre : la plus récente l'emporte, quête par quête (à la même seconde, écarter
--- l'emporte sur remettre). Rend celles qui ont changé, { { quete = id, ecartee, par }, … } triées par quête.
+-- l'emporte sur remettre). Rend celles à annoncer, { { quete = id, ecartee, par }, … } triées par quête : une écartée
+-- qui a changé, une remise seulement si je connaissais la quête écartée (une vieille remise d'une quête inconnue : rien).
 function ns.fusionner(db, recues)
   local changees = {}
   for id, d in pairs(recues or {}) do
@@ -204,11 +214,20 @@ function ns.fusionner(db, recues)
     local a = db.ecartees[id]
     if not a or d.date > a.date or (d.date == a.date and d.ecartee and not a.ecartee) then
       db.ecartees[id] = { ecartee = d.ecartee, date = d.date, par = d.par }
-      changees[#changees + 1] = { quete = id, ecartee = d.ecartee, par = d.par }
+      if d.ecartee or (a and a.ecartee) then changees[#changees + 1] = { quete = id, ecartee = d.ecartee, par = d.par } end
     end
   end
   table.sort(changees, function(a, b) return a.quete < b.quete end)
   return changees
+end
+
+-- Les remises datées de plus de OUBLI avant maintenant (heure serveur) sont oubliées : les décisions ne s'accumulent pas
+-- (une écartée reste, elle sert tant que la quête existe).
+-- ponytail: un membre absent plus de 7 jours qui a manqué une remise ramène l'écartée (annoncée : « Remettre » de nouveau).
+function ns.purger(db, maintenant)
+  for id, d in pairs(db.ecartees or {}) do
+    if not d.ecartee and d.date < maintenant - OUBLI then db.ecartees[id] = nil end
+  end
 end
 
 -- Les membres pour ns.calculer, dans l'ordre de la Compagnie : moi avec mon état lu en direct, les autres avec leur
@@ -244,7 +263,9 @@ end
 
 -- Un changement de mon état (force : une demande d'état, il part même inchangé). Une rafale d'événements ne programme
 -- qu'un envoi, ns.DELAI_ENVOI plus tard, avec l'état lu à ce moment ; un état inchangé ne repart pas.
--- io = { programmer = fn(délai, fn), monEtat = fn() -> état, envoyerEtat = fn(message) -> false si refusé }.
+-- io = { programmer = fn(délai, fn), monEtat = fn() -> état, envoyerEtat = fn(message) -> false si refusé,
+-- trop = fn() : l'état ne tient pas dans MAX_MORCEAUX, rien ne part (jamais un état tronqué) ; dit une fois, jusqu'à ce
+-- qu'un état tienne de nouveau }.
 function ns.signaler(e, force, io)
   e.force = e.force or force
   if e.prevu then return end
@@ -257,6 +278,8 @@ function ns.signaler(e, force, io)
     if corps == e.dernier and not e.force then return end
     e.force, e.envoi = false, (e.envoi or 0) % 99 + 1
     local morceaux, tous = ns.morceaux(c.id, corps, e.envoi), true
+    if #morceaux == 0 and not e.trop then io.trop() end
+    e.trop = #morceaux == 0
     for _, m in ipairs(morceaux) do tous = io.envoyerEtat(m) ~= false and tous end
     -- Noté comme parti seulement s'il est entré en entier dans la file d'envoi : sinon il repartira.
     e.dernier = tous and #morceaux > 0 and corps or nil

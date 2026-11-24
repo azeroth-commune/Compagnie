@@ -313,7 +313,46 @@ end
 local function chuchote(texte, de)
     CompagnieMessages:GetScript("OnEvent")(CompagnieMessages, "CHAT_MSG_ADDON", "Compagnie", texte, "WHISPER", de or "Léo Lame")
 end
-local function suivi() return CompagnieSuiviQuetes:GetText() or "" end
+-- Le texte du suivi : ses lignes affichées (une par quête), dans l'ordre.
+local function suivi()
+    local t = {}
+    for i = 1, 200 do
+        local l = _G["CompagnieSuiviLigne" .. i]
+        if not (l and l:IsShown()) then break end
+        t[#t + 1] = l.texte:GetText() or ""
+    end
+    return table.concat(t, "\n")
+end
+-- La ligne du suivi qui commence par ce titre (une quête de la Compagnie : en jaune).
+local function ligneSuivi(titre)
+    for i = 1, 200 do
+        local l = _G["CompagnieSuiviLigne" .. i]
+        if not (l and l:IsShown()) then return end
+        if (l.texte:GetText() or ""):find(titre, 1, true) then return l end
+    end
+end
+-- Le menu contextuel ouvert pendant f (le vrai s'ouvre, puis est refermé) : rend sa description, avec ses entrées.
+local function menuDe(f)
+    local vrai, racine = MenuUtil.CreateContextMenu, nil
+    MenuUtil.CreateContextMenu = function(owner, gen)
+        racine = MenuUtil.CreateRootMenuDescription(MenuVariants.GetDefaultContextMenuMixin())
+        gen(owner, racine)
+        return vrai(owner, gen)
+    end
+    local ok, err = pcall(f)
+    MenuUtil.CreateContextMenu = vrai
+    Menu.GetManager():CloseMenus()
+    if not ok then error(err, 0) end
+    return racine
+end
+-- Choisir une entrée d'un menu par son texte ; rend false si elle n'y est pas.
+local function choisir(racine, texte)
+    if not racine then return false end
+    for _, d in racine:EnumerateElementDescriptions() do
+        if MenuUtil.GetElementText(d) == texte then d:Pick(MenuInputContext.MouseButton, "LeftButton") return true end
+    end
+    return false
+end
 local function contient(t, motif) return t:find(motif, 1, true) ~= nil end
 local function eteindre() -- mode éteint, plus de Compagnie : le suivi du jeu revient pour les tests suivants
     CompagnieDB.compagnie, CompagnieDB.etats, CompagnieDB.modeCompagnie, CompagnieDB.ecartees = nil, nil, nil, nil
@@ -617,7 +656,7 @@ test("beaucoup de quêtes : le suivi s'arrête à 60 % de l'écran et les quête
             CompagnieDB.modeCompagnie = nil
             charger()
             assertTrue(CompagnieSuiviFrame:IsShown(), "le suivi est ouvert")
-            assertTrue(CompagnieSuiviQuetes:GetStringHeight() > UIParent:GetHeight() * 0.6, "assez de quêtes pour dépasser")
+            assertTrue(CompagnieSuiviContenu:GetHeight() > UIParent:GetHeight() * 0.6, "assez de quêtes pour dépasser")
             assertTrue(CompagnieSuiviFrame:GetHeight() <= UIParent:GetHeight() * 0.6 + 0.5,
                 "hauteur bornée : " .. CompagnieSuiviFrame:GetHeight() .. " / écran " .. UIParent:GetHeight())
             assertTrue(CompagnieSuiviDefil:GetVerticalScrollRange() > 0, "les quêtes défilent")
@@ -803,7 +842,12 @@ test("mode Compagnie éteint : la petite liste À faire reste visible ; sa croix
             charger()
             assertTrue(not (CompagnieSuiviFrame and CompagnieSuiviFrame:IsShown()), "pas de suivi, mode éteint")
             assertTrue(CompagnieAFaireFrame and CompagnieAFaireFrame:IsShown(), "la petite liste est visible")
-            assertEquals("Partager en groupe : Les Kobolds", bouton("CompagniePetiteListe1"):GetText())
+            local p = bouton("CompagniePetiteListe1")
+            assertEquals("Partager en groupe : Les Kobolds", p:GetText())
+            -- Clic droit sur sa ligne (inactive) : le menu Écarter, comme dans le suivi.
+            assertTrue(choisir(menuDe(function() p:GetScript("OnMouseUp")(p, "RightButton") end), "Écarter pour la Compagnie"))
+            assertNotNil(select(2, StaticPopup_Visible("COMPAGNIE_ECARTER")), "confirmation")
+            StaticPopup_Hide("COMPAGNIE_ECARTER")
             -- Léo prend les Kobolds : rien à faire, la petite liste se cache.
             chuchote("E;essai;1/1/1;5#1001:0;1003:0########")
             assertTrue(not CompagnieAFaireFrame:IsShown(), "rien à faire : cachée")
@@ -849,6 +893,14 @@ test("abandonner dans le jeu écarte la quête pour la Compagnie, mon état le p
             assertTrue(contient(t, "Tu as écarté « Les pattes de loup » pour la Compagnie."), t)
             ecouler(5)
             assertTrue(envoyes[#envoyes].texte:find("#1001:1:%d+:" .. moiPrenom .. "#") ~= nil, "mon état porte l'écartée : " .. envoyes[#envoyes].texte)
+            -- Je la reprends (QUEST_ACCEPTED) : je l'avais écartée, c'est une remise, datée et annoncée.
+            t = dits(function() evenement("QUEST_ACCEPTED", 1001) end)
+            assertTrue(contient(t, "Tu as remis « Les pattes de loup » dans la Compagnie."), t)
+            assertTrue(CompagnieDB.ecartees[1001].ecartee == false and CompagnieDB.ecartees[1001].par == moiPrenom, "remise par moi")
+            -- Une quête écartée par Léo, que je prends : elle reste écartée (c'est à lui de la remettre, ou à « Remettre »).
+            CompagnieDB.ecartees[1003] = { ecartee = true, date = 1, par = "Léo" }
+            t = dits(function() evenement("QUEST_ACCEPTED", 1003) end)
+            assertTrue(CompagnieDB.ecartees[1003].ecartee and t == "", "écartée par Léo : inchangée " .. t)
             -- Ma quête d'avant, que Léo n'a pas : à moi seul, rien n'est écarté.
             C_QuestLog.SetSelectedQuest(2201)
             C_QuestLog.SetAbandonQuest()
@@ -865,61 +917,91 @@ test("abandonner dans le jeu écarte la quête pour la Compagnie, mon état le p
     abandons = 0
 end)
 
-test("Écarter (#21) : un clic sur une quête du suivi, confirmé ; l'onglet Écartées avec Remettre ; la décision d'un autre", function()
+test("Écarter (#21) : clic droit sur une quête du suivi ou une ligne À faire (même inactive), menu, confirmé ; Écartées avec Remettre", function()
     local moiPrenom = moi().nom:match("^%S+")
-    avecJournal({ pattes(3), KOBOLDS }, function()
+    local MURLOCS = { id = 1004, titre = "Les murlocs", partageable = true }
+    local function ecarter(racine, titre)
+        local premier
+        for _, d in racine:EnumerateElementDescriptions() do premier = premier or MenuUtil.GetElementText(d) end
+        assertEquals(titre, premier, "le titre de la quête est en tête du menu")
+        assertTrue(choisir(racine, "Écarter pour la Compagnie"), "le menu propose d'écarter")
+        local _, popup = StaticPopup_Visible("COMPAGNIE_ECARTER")
+        assertNotNil(popup, "confirmation affichée")
+        return dits(function() popup.button1:Click() end)
+    end
+    -- La bulle de la ligne s'affiche-t-elle à son survol ? (le simulateur ne rend pas le texte de GameTooltip : le texte,
+    -- « Clic droit : écarter pour la Compagnie », se vérifie sur la capture et en jeu.)
+    local function bulle(b)
+        GameTooltip:Hide()
+        b:GetScript("OnEnter")(b)
+        local vue = GameTooltip:IsShown() and GameTooltip:GetOwner() == b
+        GameTooltip:Hide()
+        return vue
+    end
+    avecJournal({ pattes(3), KOBOLDS, MURLOCS }, function()
         fabriquer({ guid = LEO, nom = "Léo Lame" })
         CompagnieDB.modeCompagnie = nil
         CompagnieDB.etats = { [LEO] = { niveau = 5, rendues = {}, quetes = { [1001] = { finie = false, objectifs = { { fait = 1, total = 8 } } } } } }
-        avecLeo(function(envoyes)
+        -- Léo n'est pas dans mon groupe : « Partager en groupe » est inactif, son clic droit marche quand même.
+        avecGroupe({}, false, function()
             charger()
-            assertTrue(contient(suivi(), "|Hcompagnie:1001|hLes pattes de loup|h"), "le titre est un lien : " .. suivi())
-            local clic = CompagnieSuiviContenu:GetScript("OnHyperlinkClick")
-            clic(CompagnieSuiviContenu, "compagnie:1001", "[Les pattes de loup]", "LeftButton")
-            local _, popup = StaticPopup_Visible("COMPAGNIE_ECARTER")
-            assertNotNil(popup, "confirmation affichée")
+            local p = bouton("CompagnieSuiviAFaire1")
+            assertEquals("Partager en groupe : Les Kobolds (+1)", p:GetText())
+            assertTrue(not p:IsEnabled(), "inactif")
+            assertTrue(bulle(p), "la bulle s'affiche, même inactif")
+            local t = ecarter(menuDe(function() p:GetScript("OnMouseUp")(p, "RightButton") end), "Les Kobolds")
+            assertTrue(contient(t, "Tu as écarté « Les Kobolds » pour la Compagnie."), t)
+            assertTrue(CompagnieDB.ecartees[1003].ecartee, "Kobolds écartés")
+            -- La ligne « Abandonner aussi » (déjà écartée) : pas de menu, ni de bulle.
+            local a = bouton("CompagnieSuiviAFaire1")
+            assertEquals("Abandonner aussi : Les Kobolds", a:GetText())
+            assertNil(menuDe(function() a:GetScript("OnMouseUp")(a, "RightButton") end), "déjà écartée : pas de menu")
+            assertTrue(not bulle(a), "pas de bulle")
+        end)
+        avecLeo(function(envoyes)
+            evenement("GROUP_ROSTER_UPDATE")
+            -- Une ligne active : le clic gauche partage, le clic droit ouvre le menu.
+            local p = bouton("CompagnieSuiviAFaire2")
+            assertEquals("Partager : Les murlocs", p:GetText())
+            assertTrue(p:IsEnabled())
+            ecarter(menuDe(function() p:GetScript("OnMouseUp")(p, "RightButton") end), "Les murlocs")
+            assertTrue(CompagnieDB.ecartees[1004].ecartee, "murlocs écartés")
+            -- Une quête du suivi : clic droit sur sa ligne, le menu, la confirmation (annulable).
+            local l = assert(ligneSuivi("Les pattes de loup"), "la quête est dans le suivi : " .. suivi())
+            assertTrue(bulle(l), "la bulle de la ligne s'affiche")
+            local racine = menuDe(function() l:Click("RightButton") end)
+            assertTrue(choisir(racine, "Écarter pour la Compagnie"))
             StaticPopup_Hide("COMPAGNIE_ECARTER")
-            assertNil(CompagnieDB.ecartees, "annulé : rien d'écarté")
-            clic(CompagnieSuiviContenu, "compagnie:1001", "[Les pattes de loup]", "LeftButton")
-            _, popup = StaticPopup_Visible("COMPAGNIE_ECARTER")
-            local t = dits(function() popup.button1:Click() end)
+            assertTrue(not CompagnieDB.ecartees[1001], "annulé : rien d'écarté")
+            local t = ecarter(menuDe(function() l:Click("RightButton") end), "Les pattes de loup")
             assertTrue(contient(t, "Tu as écarté « Les pattes de loup » pour la Compagnie."), t)
-            -- Hors de l'avancement commun : à part, à moi (je l'ai encore), et « Abandonner aussi » ; rien d'abandonné.
+            -- Hors de l'avancement commun : à part, à moi (je l'ai encore), dite écartée, et « Abandonner aussi ».
             local q = suivi()
-            assertTrue(not contient(q, "|Hcompagnie:1001|h"), "plus une quête de la Compagnie : " .. q)
-            assertTrue(contient(q:sub(q:find("À part", 1, true) or #q + 1), "Les pattes de loup (" .. moiPrenom .. ")"), q)
+            local apart = q:sub(q:find("À part", 1, true) or #q + 1)
+            assertTrue(contient(apart, "Les pattes de loup (" .. moiPrenom .. ", écartée)"), q)
+            assertTrue(not contient(q:sub(1, (q:find("À part", 1, true) or #q + 1) - 1), "Les pattes de loup"), "plus une quête de la Compagnie : " .. q)
+            assertNil(menuDe(function() ligneSuivi("Les pattes de loup"):Click("RightButton") end), "à part : pas de menu")
             assertEquals("Abandonner aussi : Les pattes de loup", bouton("CompagnieSuiviAFaire1"):GetText())
             assertEquals(0, abandons, "rien n'est abandonné tout seul")
             ecouler(5)
-            assertTrue(envoyes[#envoyes].texte:find("#1001:1:%d+:" .. moiPrenom .. "#") ~= nil, envoyes[#envoyes].texte)
-            -- Clic droit sur « Partager » : écarter les Kobolds.
-            local p = bouton("CompagnieSuiviAFaire2")
-            assertEquals("Partager : Les Kobolds", p:GetText())
-            p:Click("RightButton")
-            _, popup = StaticPopup_Visible("COMPAGNIE_ECARTER")
-            assertNotNil(popup, "clic droit : confirmation")
-            dits(function() popup.button1:Click() end)
-            assertTrue(CompagnieDB.ecartees[1003].ecartee, "Kobolds écartés")
-            assertTrue(not contient(bouton("CompagnieSuiviAFaire2") and bouton("CompagnieSuiviAFaire2"):GetText() or "", "Partager"),
-                "plus à partager")
-            -- L'onglet Écartées : les deux, qui l'a décidé, « Remettre ».
+            assertTrue(envoyes[#envoyes].texte:find("#1001:1:%d+:" .. moiPrenom .. ";") ~= nil, envoyes[#envoyes].texte)
+            -- L'onglet Écartées : les trois, qui l'a décidé, « Remettre ».
             SlashCmdList.COMPAGNIE("")
             CompagnieFrameTab2:Click()
-            local l = lignes()
-            assertEquals(2, #l)
-            assertEquals("Les Kobolds", l[1].nom)
-            assertEquals("Les pattes de loup", l[2].nom)
-            assertEquals(moiPrenom, l[2].presence)
-            assertEquals("Remettre", l[2].retirer:GetText())
-            t = dits(function() l[2].retirer:Click() end)
+            local lg = lignes()
+            assertEquals(3, #lg)
+            assertEquals("Les Kobolds", lg[1].nom)
+            assertEquals("Les pattes de loup", lg[3].nom)
+            assertEquals(moiPrenom, lg[3].presence)
+            assertEquals("Remettre", lg[3].retirer:GetText())
+            t = dits(function() lg[3].retirer:Click() end)
             assertTrue(contient(t, "Tu as remis « Les pattes de loup » dans la Compagnie."), t)
-            assertEquals(1, #lignes(), "il reste les Kobolds")
-            assertTrue(contient(suivi(), "|Hcompagnie:1001|h"), "de retour dans les quêtes de la Compagnie : " .. suivi())
+            assertEquals(2, #lignes(), "il reste les Kobolds et les murlocs")
+            assertNotNil(ligneSuivi("|cffffd100Les pattes de loup"), "de retour dans les quêtes de la Compagnie : " .. suivi())
             -- Léo remet les Kobolds (décision plus récente) : annoncé, la liste suit.
             t = dits(function() chuchote("E;essai;5/1/1;5#1001:0:1/8###1003:0:" .. math.floor(GetServerTime() + 60) .. ":Léo#####") end)
             assertTrue(contient(t, "Léo a remis « Les Kobolds » dans la Compagnie."), t)
-            assertEquals(0, #lignes(), "plus rien d'écarté")
-            assertTrue(CompagnieEcarteesVide:IsVisible(), "Aucune quête écartée.")
+            assertEquals(1, #lignes(), "il reste les murlocs")
             CompagnieFrameTab1:Click()
             assertEquals(2, #lignes(), "l'onglet Membres")
             CompagnieFrame:Hide()

@@ -18,8 +18,10 @@
 --                      { type = "avance", membre = "Léo", quete = id, par = { "Virgile" } },
 --                      { type = "foyer", membre = "Léo", auberge = "Comté-de-l'Or" } } }
 -- Les quêtes de la Compagnie sont celles qu'au moins un membre a en cours, sauf une quête écartée (#21) et une quête
--- d'avant (#20) : elle est à part (aPart, chez chaque membre qui l'a, avec son avancement à lui), sans faire attendre
--- personne ; une quête d'avant que tous les membres ont redevient commune. Pour chaque quête de la Compagnie, membre par membre :
+-- d'avant (#20) pour tous ceux qui l'ont : elle est à part (aPart, chez chaque membre qui l'a, avec son avancement à lui),
+-- sans faire attendre personne, sauf si tous les membres l'ont. Dès qu'un membre l'a prise après son entrée, elle est de
+-- la Compagnie : les quêtes d'avant des autres comptent normalement pour elle, et qui ne l'a pas reçoit « Partager ».
+-- Pour chaque quête de la Compagnie, membre par membre :
 --   - en cours : son avancement compte, objectif par objectif (le moins avancé l'emporte) ;
 --   - déjà rendue (avant ou après son entrée) : il ne retient plus la Compagnie ;
 --   - ni l'un ni l'autre : il compte à 0 et la Compagnie l'attend (jamais à rendre sans lui).
@@ -35,19 +37,19 @@ local function rendue(m, id) return m.rendues and m.rendues[id] or m.renduesAvan
 
 function ns.calculer(membres, maintenant, ecartees)
   local quetes, aPart, niveau, foyer, recent, pierre = {}, {}, nil, nil, 0, 0
-  local tenue, avant = {}, {} -- [id] = combien de membres l'ont en cours ; [id] = true : quête d'avant d'un membre
+  local tenue, prise = {}, {} -- [id] = combien de membres l'ont en cours ; [id] = true : un membre l'a prise après son entrée
   for _, m in ipairs(membres) do
     if m.niveau and (not niveau or m.niveau < niveau) then niveau = m.niveau end -- un membre jamais entendu : sans niveau
     if m.auberge and (m.liaison or 0) > recent then foyer, recent = m.auberge, m.liaison end
     if m.finRecharge then pierre = math.max(pierre, m.finRecharge - maintenant) end
     for id in pairs(m.quetes or {}) do
       tenue[id] = (tenue[id] or 0) + 1
-      if m.avant and m.avant[id] then avant[id] = true end
+      if not (m.avant and m.avant[id]) then prise[id] = true end
     end
   end
   ecartees = ecartees or {}
   local function ecartee(id) return ecartees[id] and ecartees[id].ecartee end
-  local function commune(id) return not ecartee(id) and (not avant[id] or tenue[id] == #membres) end
+  local function commune(id) return not ecartee(id) and (prise[id] or tenue[id] == #membres) end
   for id in pairs(tenue) do if commune(id) then quetes[id] = { objectifs = {}, aRendre = true, enAttente = {} } end end
   for _, m in ipairs(membres) do
     for id, q in pairs(m.quetes or {}) do

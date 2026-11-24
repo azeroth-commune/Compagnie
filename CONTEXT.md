@@ -29,7 +29,7 @@ Une différence entre les journaux de quêtes des membres, qui demande une actio
 _Avoid_: désynchro, divergence
 
 **Quête d'avant**:
-Une quête qu'un membre avait dans son journal en entrant dans la Compagnie (les restes de sa zone de départ) : à lui, affichée chez tous à part, avec son nom et son avancement, comme une quête personnelle ; elle ne crée aucun écart et ne fait attendre personne. Si tous les membres l'ont, elle redevient une quête de la Compagnie ; elle disparaît quand il la rend ou l'abandonne (l'abandonner ne l'écarte pas : elle n'était qu'à lui).
+Une quête qu'un membre avait dans son journal en entrant dans la Compagnie (les restes de sa zone de départ) : à lui, affichée chez tous à part, avec son nom et son avancement, comme une quête personnelle ; elle ne crée aucun écart et ne fait attendre personne. Elle est de la Compagnie dès qu'un membre l'a prise après son entrée (sa quête d'avant compte alors normalement, et qui ne l'a pas reçoit « Partager ») ou que tous les membres l'ont ; elle disparaît quand il la rend ou l'abandonne (l'abandonner ne l'écarte pas : elle n'était qu'à lui).
 _Avoid_: ancienne quête, quête héritée
 
 **Quête à partager**:
@@ -40,7 +40,7 @@ _Avoid_: ancienne quête, quête héritée
 _Avoid_: quête non partageable
 
 **Quête écartée**:
-Une quête que la Compagnie ne fait pas, décidé par n'importe quel membre, avant ou après l'avoir prise (« Écarter » dans le suivi ou la liste À faire) ; abandonner une quête dans le jeu, c'est l'écarter. Elle sort de l'avancement commun et des écarts chez tous, et n'est jamais à partager. Chez un membre qui l'a encore : écart « Abandonner aussi », jamais d'abandon automatique ; s'il la garde, elle est à lui, à part, nommée. « Remettre » annule ; chaque décision est datée, la plus récente l'emporte, et le chat dit qui a écarté ou remis quoi.
+Une quête que la Compagnie ne fait pas, décidé par n'importe quel membre, avant ou après l'avoir prise (clic droit sur la quête dans le suivi ou la liste À faire) ; abandonner une quête dans le jeu, c'est l'écarter. Elle sort de l'avancement commun et des écarts chez tous, et n'est jamais à partager. Chez un membre qui l'a encore : écart « Abandonner aussi », jamais d'abandon automatique ; s'il la garde, elle est à lui, à part, nommée et dite écartée. « Remettre » annule, comme reprendre une quête qu'on avait soi-même écartée ; chaque décision est datée, la plus récente l'emporte (à la même seconde, écarter), et le chat dit qui a écarté ou remis quoi (une remise, seulement à qui la savait écartée). Une remise est oubliée au bout de 7 jours.
 _Avoid_: quête abandonnée (l'abandon n'est qu'une façon d'écarter), quête ignorée, quête refusée
 
 **Quête en avance**:
@@ -103,7 +103,7 @@ _Avoid_: exclure, kick
 
 - Une **Compagnie** a de 2 à 5 membres ; un **Membre** n'appartient qu'à une **Compagnie**.
 - L'**avancement commun** compte tous les membres ; un **absent** compte avec son dernier état connu, donc une quête n'est jamais **à rendre** sans lui.
-- Les quêtes de la **Compagnie** sont celles que ses membres prennent, sauf les **quêtes d'avant** ; l'add-on ne choisit pas les quêtes (le guide viendra avec le **chemin de synchronisation**).
+- Les quêtes de la **Compagnie** sont celles que ses membres prennent, sauf une **quête d'avant** que personne n'a prise après son entrée ; l'add-on ne choisit pas les quêtes (le guide viendra avec le **chemin de synchronisation**).
 - Une **quête personnelle** ou une **quête d'avant** n'entre pas dans l'**avancement commun** des autres.
 
 ## Example dialogue
