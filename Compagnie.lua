@@ -623,9 +623,20 @@ local function remplirAFaire(l, ecarts, unites)
       b:SetPoint("TOPLEFT", 0, -(i - 1) * 24)
       b:GetFontString():SetPoint("LEFT", 8, 0)
       b:GetFontString():SetPoint("RIGHT", -8, 0)
+      -- Une seule ligne, coupée par « … » : un long titre de quête débordait du bouton sur deux lignes (vu en jeu,
+      -- 25/11/2026) ; le texte entier passe dans la bulle.
+      b:GetFontString():SetWordWrap(false)
       -- Un bouton inactif n'a ni OnClick ni (par défaut) OnEnter, mais reçoit OnMouseUp : le clic droit passe par là.
       b:SetMotionScriptsWhileDisabled(true)
-      b:SetScript("OnEnter", function(self) if self.ecartable then bulleEcarter(self, self.details) end end)
+      b:SetScript("OnEnter", function(self)
+        local entier = self:GetFontString():IsTruncated() and self:GetText() or nil
+        if self.ecartable then bulleEcarter(self, self.details or entier)
+        elseif entier then
+          GameTooltip:SetOwner(self, "ANCHOR_LEFT")
+          GameTooltip:SetText(entier, 1, 1, 1, 1, true)
+          GameTooltip:Show()
+        end
+      end)
       b:SetScript("OnLeave", function() GameTooltip:Hide() end)
       b:HookScript("OnMouseUp", function(self, bouton)
         if bouton == "RightButton" and self.ecartable then menuEcarter(self, self.ecartable) end

@@ -813,6 +813,7 @@ test("la liste À faire se dessine avec ses boutons ; aucun abandon sans un clic
             assertEquals("Abandonner aussi : Les pattes de loup", a and a:GetText())
             assertTrue(a:IsEnabled())
             assertEquals("Partager en groupe : Les Kobolds", bouton("CompagnieSuiviAFaire2"):GetText(), "Mira ne l'a pas encore")
+            assertTrue(not bouton("CompagnieSuiviAFaire2"):GetFontString():CanWordWrap(), "une seule ligne : un long titre est coupé par « … », pas sur deux lignes")
             -- Aucun abandon sans un clic : ni à la réception, ni au fil des événements et des minuteries.
             for _ = 1, 5 do evenement("QUEST_LOG_UPDATE") end
             ecouler(10)
