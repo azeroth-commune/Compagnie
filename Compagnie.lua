@@ -125,6 +125,16 @@ end
 
 local function entier(v, max) return math.min(max, math.max(0, math.floor(tonumber(v) or 0))) end
 
+-- Mes prérequis manquants pour la zone de la Compagnie (#27), calculés en direct (rendue : IsQuestFlaggedCompleted ; ma
+-- race et ma classe) : choisir la zone du rendez-vous montre tout de suite ce qu'il faut faire avant de partir.
+local function mesPrerequis()
+  local zc = e.db.zoneCompagnie
+  if not zc then return nil end
+  local q = (AC:Lire("base des quêtes")) or {}
+  return { zone = zc.zone, manquants = ns.prerequisManquants(zc.zone, q, C_QuestLog.IsQuestFlaggedCompleted,
+    select(3, UnitRace("player")), select(3, UnitClass("player")), ns.ecarteesEffectives(e.db.ecartees, q)) }
+end
+
 -- La zone d'une quête (#13) : l'en-tête sous lequel le journal la range (en Classic, un nom de zone ; à vérifier en jeu
 -- contre GetRealZoneText).
 function monEtat()
@@ -172,6 +182,7 @@ function monEtat()
   return { niveau = UnitLevel("player"), quetes = quetes, rendues = rendues, renduesAvant = renduesAvant, avant = avant,
     ecartees = e.db.ecartees, -- les décisions de la Compagnie (#21), telles que je les connais
     zoneCompagnie = e.db.zoneCompagnie, -- la zone de la Compagnie (#24), telle que je la connais
+    prerequis = mesPrerequis(), -- mes prérequis manquants pour cette zone (#27)
     auberge = auberge ~= "" and auberge or nil, liaison = f and f.auberge == auberge and f.date or nil,
     finRecharge = reste > 0 and math.ceil((GetServerTime() + reste) / 60) * 60 or nil }
 end
@@ -270,6 +281,13 @@ local function prenom(guid)
   return i and c.membres[i].nom:match("^(%S+)") or "?"
 end
 
+-- Des membres (GUID), nommés par leur prénom ; moi : « toi ».
+local function noms(guids)
+  local t = {}
+  for i, g in ipairs(guids) do t[i] = g == moi() and "toi" or prenom(g) end
+  return table.concat(t, ", ")
+end
+
 local function ligneObjectif(i, o)
   local compte = o.fait .. "/" .. o.total
   local t = o.texte
@@ -323,13 +341,14 @@ local function membresDuJeu()
   end
   return liste, presents, unites
 end
+-- La base des quêtes du socle (souscrite au chargement) : { [id] = { nom, zone, suites, … } }, vide tant qu'elle manque.
+local function base() return (AC:Lire("base des quêtes")) or {} end
 -- Le calcul de la Compagnie.
 local function calculer()
   local liste, presents, unites = membresDuJeu()
-  return ns.calculer(liste, GetServerTime(), e.db.ecartees), presents, unites
+  local zc = e.db.zoneCompagnie
+  return ns.calculer(liste, GetServerTime(), e.db.ecartees, base(), zc and zc.zone), presents, unites
 end
--- La base des quêtes du socle (souscrite au chargement) : { [id] = { nom, zone, suites, … } }, vide tant qu'elle manque.
-local function base() return (AC:Lire("base des quêtes")) or {} end
 local function titre(id)
   local q = titres[id] or C_QuestLog.GetTitleForQuestID(id)
   return q or (base()[id] or {}).nom or ("Quête " .. id)
@@ -414,12 +433,17 @@ local function menuEcarter(owner, id)
     root:CreateButton("Écarter pour la Compagnie", function() proposerEcart(id) end)
   end)
 end
-local function bulleEcarter(owner)
+local function bulleEcarter(owner, details) -- details : ce que dit la ligne en entier (prérequis manquant, #27)
   GameTooltip:SetOwner(owner, "ANCHOR_LEFT")
-  GameTooltip:SetText("Clic droit : écarter pour la Compagnie", 1, 1, 1, true)
+  if details then
+    GameTooltip:SetText(details, 1, 1, 1, true)
+    GameTooltip:AddLine("Clic droit : écarter pour la Compagnie", 0.6, 0.6, 0.6, true)
+  else GameTooltip:SetText("Clic droit : écarter pour la Compagnie", 1, 1, 1, true) end
   GameTooltip:Show()
 end
-local function ecartee(id) local d = e.db.ecartees and e.db.ecartees[id] return d and d.ecartee end
+-- Écartée pour de bon : par une décision, ou emportée avec la chaîne d'une quête écartée (#27).
+local function ecartees() return ns.ecarteesEffectives(e.db.ecartees, base()) end
+local function ecartee(id) return ecartees()[id] ~= nil end
 
 -- L'acceptation automatique (#26) : à l'ouverture de la fenêtre d'une quête (QUEST_DETAIL : partage ou PNJ), acceptée si
 -- un autre membre l'a dans son journal (dernier état connu, corrigé par le jeu pour mon groupe : un partage arrive avant
@@ -435,7 +459,7 @@ local function accepterQuete()
 end
 local function confirmerEscorte(qui, titreEscorte)
   if not accepteAuto() then return end
-  for id in pairs(e.db.ecartees or {}) do if ecartee(id) and titre(id) == titreEscorte then return end end
+  for id in pairs(ecartees()) do if titre(id) == titreEscorte then return end end
   for _, m in ipairs(e.db.compagnie.membres) do
     if m.guid ~= moi() and (m.nom == qui or m.nom:match("^(%S+)") == qui) then
       ConfirmAcceptQuest()
@@ -559,13 +583,13 @@ local function remplirAFaire(l, ecarts, unites)
       b:GetFontString():SetPoint("RIGHT", -8, 0)
       -- Un bouton inactif n'a ni OnClick ni (par défaut) OnEnter, mais reçoit OnMouseUp : le clic droit passe par là.
       b:SetMotionScriptsWhileDisabled(true)
-      b:SetScript("OnEnter", function(self) if self.ecartable then bulleEcarter(self) end end)
+      b:SetScript("OnEnter", function(self) if self.ecartable then bulleEcarter(self, self.details) end end)
       b:SetScript("OnLeave", function() GameTooltip:Hide() end)
       b:HookScript("OnMouseUp", function(self, bouton)
         if bouton == "RightButton" and self.ecartable then menuEcarter(self, self.ecartable) end
       end)
       b:SetScript("OnClick", function(self)
-        if self.x.type == "avance" or self.x.type == "foyer" then return end
+        if self.x.type == "avance" or self.x.type == "foyer" or self.x.type == "prerequis" then return end
         if self.x.type == "ecartee" then
           local p = StaticPopup_Show("COMPAGNIE_ABANDON", titre(self.x.quete))
           if p then p.data = self.x.quete end
@@ -579,8 +603,17 @@ local function remplirAFaire(l, ecarts, unites)
       end)
       l.boutons[i] = b
     end
-    b.x, b.ecartable = x, x.type == "avance" and x.quete or nil
-    if x.type == "ecartee" then
+    b.x, b.ecartable, b.details = x, (x.type == "avance" or x.type == "prerequis") and x.quete or nil, nil
+    if x.type == "prerequis" then
+      local n = #x.chaine
+      local quetes = n == 1 and "1 quête" or n .. " quêtes"
+      b:SetText(("Avant %s : %s à %s"):format(titre(x.quete), quetes, nomZone(x.zone)))
+      b.details = ("« %s » demande avant %s à %s, à commencer par « %s »%s. Manque à %s.%s"):format(titre(x.quete), quetes,
+        nomZone(x.zone), titre(x.chaine[1]), x.donneur and x.donneur.nom and " (" .. x.donneur.nom .. ")" or "",
+        x.tous and "toute la Compagnie" or noms(x.manquants),
+        #x.aControler > 0 and " À contrôler : " .. noms(x.aControler) .. " (son état ne couvre pas cette zone)." or "")
+      b:Disable()
+    elseif x.type == "ecartee" then
       b:SetText("Abandonner aussi : " .. titre(x.quete))
       b:Enable()
     elseif x.type == "avance" then
@@ -676,7 +709,8 @@ local function dessinerSuivi(calc, presents, unites)
   local hAFaire = remplirAFaire(CompagnieSuiviAFaire, mesEcarts(calc), unites)
   local h = placerLignes(blocsSuivi(calc, presents))
   local zc = e.db.zoneCompagnie
-  CompagnieZoneBouton:SetText(zc and "Zone de la Compagnie : " .. nomZone(zc.zone) or "Choisir la zone de la Compagnie")
+  CompagnieZoneBouton:SetText(not zc and "Choisir la zone de la Compagnie" or "Zone : " .. nomZone(zc.zone) ..
+    (#calc.aControler > 0 and " (" .. noms(calc.aControler) .. " à contrôler)" or ""))
   CompagnieSuiviZone:SetText(libelleZone())
   CompagnieSuiviZone:SetWidth(CompagnieSuiviZone:GetFontString():GetStringWidth() + 22)
   CompagnieSuiviContenu:SetHeight(math.max(1, h))

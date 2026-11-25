@@ -40,7 +40,7 @@ _Avoid_: ancienne quête, quête héritée
 _Avoid_: quête non partageable
 
 **Quête écartée**:
-Une quête que la Compagnie ne fait pas, décidé par n'importe quel membre, avant ou après l'avoir prise (clic droit sur la quête dans le suivi ou la liste À faire) ; abandonner une quête dans le jeu, c'est l'écarter. Elle sort de l'avancement commun et des écarts chez tous, et n'est jamais à partager. Chez un membre qui l'a encore : écart « Abandonner aussi », jamais d'abandon automatique ; s'il la garde, elle est à lui, à part, nommée et dite écartée. « Remettre » annule, comme reprendre une quête qu'on avait soi-même écartée ; chaque décision est datée, la plus récente l'emporte (à la même seconde, écarter), et le chat dit qui a écarté ou remis quoi (une remise, seulement à qui la savait écartée). Une remise est oubliée au bout de 7 jours.
+Une quête que la Compagnie ne fait pas, décidé par n'importe quel membre, avant ou après l'avoir prise (clic droit sur la quête dans le suivi, la liste À faire ou un prérequis manquant) ; abandonner une quête dans le jeu, c'est l'écarter. Elle emporte sa chaîne : ses suites, et les prérequis qui ne servaient qu'à des quêtes écartées (un prérequis qui ouvre une autre quête gardée reste) ; une quête qui a sa propre décision la garde. Elle sort de l'avancement commun et des écarts chez tous, et n'est jamais à partager. Chez un membre qui l'a encore : écart « Abandonner aussi », jamais d'abandon automatique ; s'il la garde, elle est à lui, à part, nommée et dite écartée. « Remettre » annule, comme reprendre une quête qu'on avait soi-même écartée ; chaque décision est datée, la plus récente l'emporte (à la même seconde, écarter), et le chat dit qui a écarté ou remis quoi (une remise, seulement à qui la savait écartée). Une remise est oubliée au bout de 7 jours.
 _Avoid_: quête abandonnée (l'abandon n'est qu'une façon d'écarter), quête ignorée, quête refusée
 
 **Acceptation automatique**:
@@ -80,6 +80,10 @@ _Avoid_: point de retour, bind
 La pierre de foyer vue par la Compagnie : disponible seulement quand celle de chaque membre l'est (même principe que l'avancement commun) ; pour un absent, la recharge est recalculée depuis son envoi. Le suivi la montre sur le bouton qui utilise ma pierre (« Foyer dans 40 min », « Rentrer au foyer »), sans dire à cause de qui ; le clic n'est jamais bloqué.
 
 ### Zone
+
+**Prérequis manquant**:
+Écart sur la zone de la Compagnie : une quête de la zone, que le membre peut prendre (race, classe) et n'a pas faite, demande une chaîne qui commence hors de la zone, que ce membre n'a pas faite (ni amorce, ni chaîne restée dans la zone : on la fera en avançant ; « un seul parmi plusieurs » : n'importe lequel suffit). Il nomme la quête débloquée, la chaîne, sa zone, son premier donneur et à qui elle manque (« toute la Compagnie ») ; seuls ceux à qui elle manque l'ont dans leur liste À faire. Chaque membre calcule les siens et les envoie avec la zone qu'ils couvrent ; un membre dont l'état ne couvre pas la zone choisie est **à contrôler** (on ne lui prête rien). Résorbé quand la chaîne est faite ou que la quête débloquée est écartée (« Écarter » sur l'écart).
+_Avoid_: quête manquée, prérequis manquant pour une chaîne dans la zone
 
 **Zone de la Compagnie**:
 La zone où va la Compagnie, choisie par n'importe quel membre (sans vote ni chef : le choix le plus récent l'emporte, daté comme une décision sur une quête écartée) dans le menu de son bouton, en tête du suivi. Le menu propose les zones de la base des quêtes, d'abord celles dont la Compagnie a le **niveau d'entrée** (le niveau requis du premier quart des quêtes de la zone), les autres en grisé, choisissables. Les autres membres l'apprennent dans le chat, un absent à son retour. Entrer dans une autre zone propose de la choisir dans le chat, une fois par zone ; rien ne change tout seul. Elle n'a rien à voir avec le filtre d'affichage par zone du suivi, qui reste personnel.

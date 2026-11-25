@@ -9,14 +9,21 @@
 --     (une quête peut porter sa zone : zone = "Forêt d'Elwynn", et partageable = true : seulement dans mon journal, lu
 --     en direct, le jeu ne le dit que pour mes quêtes)
 -- maintenant : l'heure serveur (pour la pierre de la Compagnie).
--- ecartees : les décisions de la Compagnie (#21), { [idQuête] = { ecartee = true (false : remise), date, par = "Léo" } }.
+-- ecartees : les décisions de la Compagnie (#21), { [idQuête] = { ecartee = true (false : remise), date, par = "Léo" } } ;
+--   une quête écartée emporte sa chaîne (#27, ns.ecarteesEffectives).
+-- base : la base des quêtes du socle ({ [id] = { zone, suites, prerequis, … } }, vide : aucune chaîne) ; zone : la zone
+--   de la Compagnie (#24, areaID, nil : pas de contrôle des prérequis) ; chaque membre porte alors ses prérequis
+--   manquants : prerequis = { zone = la zone qu'ils couvrent, manquants = { { quete, prerequis }, … } } (#27).
 -- Sortie : { niveau = 9, foyer = "Comté-de-l'Or", pierre = 2400 (secondes avant qu'elle soit prête ; 0 : prête),
 --           quetes = { [idQuête] = { objectifs = { … }, aRendre = false, enAttente = { "Léo" }, zone = … } },
 --           aPart = { { quete = id, membre = "Léo", objectifs = { … }, aRendre = true, zone = …, ecartee = true } },
 --           aFaire = { { type = "partager", membre = "Virgile", quete = id, manquants = { "Léo" } },
 --                      { type = "ecartee", membre = "Léo", quete = id, par = "Virgile" },
 --                      { type = "avance", membre = "Léo", quete = id, par = { "Virgile" } },
---                      { type = "foyer", membre = "Léo", auberge = "Comté-de-l'Or" } } }
+--                      { type = "foyer", membre = "Léo", auberge = "Comté-de-l'Or" },
+--                      { type = "prerequis", membre = "Léo", quete = id, prerequis = id, chaine, zone, donneur, manquants,
+--                        tous, aControler } },
+--           aControler = { "Mira" } }
 -- Les quêtes de la Compagnie sont celles qu'au moins un membre a en cours, sauf une quête écartée (#21) et une quête
 -- d'avant (#20) pour tous ceux qui l'ont : elle est à part (aPart, chez chaque membre qui l'a, avec son avancement à lui),
 -- sans faire attendre personne, sauf si tous les membres l'ont. Dès qu'un membre l'a prise après son entrée, elle est de
@@ -35,7 +42,8 @@ local _, ns = ...
 
 local function rendue(m, id) return m.rendues and m.rendues[id] or m.renduesAvant and m.renduesAvant[id] end
 
-function ns.calculer(membres, maintenant, ecartees)
+function ns.calculer(membres, maintenant, ecartees, base, zone)
+  base = base or {}
   local quetes, aPart, niveau, foyer, recent, pierre = {}, {}, nil, nil, 0, 0
   local tenue, prise = {}, {} -- [id] = combien de membres l'ont en cours ; [id] = true : un membre l'a prise après son entrée
   for _, m in ipairs(membres) do
@@ -47,8 +55,8 @@ function ns.calculer(membres, maintenant, ecartees)
       if not (m.avant and m.avant[id]) then prise[id] = true end
     end
   end
-  ecartees = ecartees or {}
-  local function ecartee(id) return ecartees[id] and ecartees[id].ecartee end
+  ecartees = ns.ecarteesEffectives(ecartees, base) -- avec les chaînes qu'elles emportent (#27)
+  local function ecartee(id) return ecartees[id] ~= nil end
   local function commune(id) return not ecartee(id) and (prise[id] or tenue[id] == #membres) end
   for id in pairs(tenue) do if commune(id) then quetes[id] = { objectifs = {}, aRendre = true, enAttente = {} } end end
   for _, m in ipairs(membres) do
@@ -87,8 +95,9 @@ function ns.calculer(membres, maintenant, ecartees)
       end
     end
   end
-  return { niveau = niveau, foyer = foyer, pierre = pierre, quetes = quetes, aPart = aPart,
-    aFaire = ns.ecarts(membres, foyer, quetes, ecartees) }
+  local aFaire, aControler = ns.ecarts(membres, foyer, quetes, ecartees, base, zone)
+  return { niveau = niveau, foyer = foyer, pierre = pierre, quetes = quetes, aPart = aPart, aFaire = aFaire,
+    aControler = aControler }
 end
 
 -- La liste À faire : les écarts, chacun avec le membre visé (celui qui agit) et l'action ; triée par quête.
@@ -99,9 +108,15 @@ end
 --   - quête en avance : un membre l'a rendue pendant qu'un autre l'a encore, pas finie : chez celui-ci, l'écart dit ce
 --     qui s'est passé (par = qui l'a rendue, jamais affiché) ; résorbée quand il l'a finie.
 --   - foyer différent : un membre lié à une autre auberge que le foyer (sans quête : en tête de liste).
+--   - prérequis manquant (#27) : sur la zone de la Compagnie, chez chaque membre qui ne l'a pas fait : la quête
+--     débloquée, le prérequis et sa chaîne (ns.chaine), sa zone, le donneur de la première quête, les membres à qui il
+--     manque (tous : « toute la Compagnie »), ceux à contrôler ; résorbé quand le membre l'a fait, ou que la quête
+--     débloquée ou le prérequis est écarté (la chaîne d'une quête écartée l'est avec elle).
 -- Une quête à part (d'avant, #20 : communes = les quêtes de la Compagnie) ne crée aucun écart ; seule une remise vue
 -- après l'entrée (rendues, pas renduesAvant) fait une quête en avance.
-function ns.ecarts(membres, foyer, communes, ecartees)
+-- Rend aussi les membres à contrôler (#27) : ceux dont l'état ne couvre pas la zone de la Compagnie (absent depuis le
+-- choix, jamais entendu) ; on ne sait pas ce qui leur manque, on ne leur prête rien.
+function ns.ecarts(membres, foyer, communes, ecartees, base, zone)
   local t, rendues = {}, {}
   for _, m in ipairs(membres) do
     if foyer and m.auberge and m.auberge ~= foyer then t[#t + 1] = { type = "foyer", membre = m.nom, auberge = foyer } end
@@ -123,12 +138,36 @@ function ns.ecarts(membres, foyer, communes, ecartees)
       end
     end
   end
+  local aControler, manque, ordre = {}, {}, {}
+  for _, m in ipairs(zone and membres or {}) do
+    local p = m.prerequis
+    if not (p and p.zone == zone) then aControler[#aControler + 1] = m.nom
+    else
+      for _, x in ipairs(p.manquants) do
+        if not (ecartees[x.quete] or ecartees[x.prerequis]) and base[x.prerequis] then
+          local cle = x.quete .. ":" .. x.prerequis
+          if not manque[cle] then manque[cle] = {}; ordre[#ordre + 1] = x end
+          table.insert(manque[cle], m.nom)
+        end
+      end
+    end
+  end
+  for _, x in ipairs(ordre) do
+    local noms = manque[x.quete .. ":" .. x.prerequis]
+    local chaine = ns.chaine(base, x.prerequis, zone)
+    for _, nom in ipairs(noms) do
+      t[#t + 1] = { type = "prerequis", membre = nom, quete = x.quete, prerequis = x.prerequis, chaine = chaine,
+        zone = base[x.prerequis].zone, donneur = base[chaine[1]].donneur, manquants = noms, tous = #noms == #membres,
+        aControler = aControler }
+    end
+  end
   table.sort(t, function(a, b)
     if a.quete ~= b.quete then return (a.quete or 0) < (b.quete or 0) end
     if a.type ~= b.type then return a.type < b.type end
+    if a.prerequis ~= b.prerequis then return (a.prerequis or 0) < (b.prerequis or 0) end
     return tostring(a.membre) < tostring(b.membre)
   end)
-  return t
+  return t, aControler
 end
 
 -- La suite d'une quête (#25) : ses suites dans la base des quêtes (base[id].suites : la suite de QuestieDB et les quêtes
@@ -181,5 +220,96 @@ function ns.zones(base, niveau)
     if a.niveau ~= b.niveau then return a.ouverte == (a.niveau > b.niveau) end
     return a.zone < b.zone
   end)
+  return t
+end
+
+-- Les quêtes écartées pour de bon (#27) : les décisions de la Compagnie (ecartees, { [id] = { ecartee, date, par } }) et
+-- ce qu'elles emportent dans la base des quêtes : les suites d'une quête écartée, puis les prérequis qui ne servaient
+-- qu'à des quêtes écartées (toutes leurs suites le sont) ; un prérequis qui ouvre une autre quête gardée reste. Une
+-- quête qui a sa propre décision (écartée, ou remise) la garde, et une remise arrête les suites. Rend { [id] = la décision qui l'écarte }.
+local function prerequisDe(q)
+  local t = {}
+  for _, p in ipairs(q and q.prerequis or {}) do t[#t + 1] = p end
+  for _, p in ipairs(q and q.prerequis_un or {}) do t[#t + 1] = p end
+  return t
+end
+function ns.ecarteesEffectives(ecartees, base)
+  ecartees, base = ecartees or {}, base or {}
+  local t, racines = {}, {}
+  for id, d in pairs(ecartees) do if d.ecartee then t[id] = d; racines[#racines + 1] = id end end
+  local function libre(id) return not ecartees[id] and not t[id] end
+  local i = 1 -- les suites, de proche en proche, sans passer une quête qui a sa propre décision
+  while i <= #racines do
+    for _, s in ipairs(base[racines[i]] and base[racines[i]].suites or {}) do
+      if libre(s) then t[s] = t[racines[i]]; racines[#racines + 1] = s end
+    end
+    i = i + 1
+  end
+  local change = true
+  while change do
+    change = false
+    local ids = {}
+    for id in pairs(t) do ids[#ids + 1] = id end
+    for _, id in ipairs(ids) do
+      for _, p in ipairs(prerequisDe(base[id])) do
+        local suites = base[p] and base[p].suites
+        if libre(p) and suites then
+          local toutes = true
+          for _, s in ipairs(suites) do toutes = toutes and t[s] ~= nil end
+          if toutes then t[p], change = t[id], true end
+        end
+      end
+    end
+  end
+  return t
+end
+
+-- Mes prérequis manquants pour la zone de la Compagnie (#27), chaque membre calcule les siens : pour chaque quête de la
+-- zone que je peux prendre (race, classe), pas encore rendue ni écartée, ses prérequis hors de la zone, qui ne sont pas
+-- ses amorces et que je n'ai pas rendus (prerequis : tous ; prerequis_un : un seul suffit, rien n'est signalé si l'un
+-- est rendu ou dans la zone, sinon le premier). Un prérequis absent de la base (autre faction) ne compte pas : rien
+-- n'est deviné. rendue(id) : IsQuestFlaggedCompleted ; ecartees : ns.ecarteesEffectives. Rend { { quete, prerequis }, … }
+-- trié. Une chaîne qui reste dans la zone n'est pas signalée : on la fera en avançant ; une quête de la zone qui demande
+-- une quête de la zone qui demande une quête d'ailleurs l'est, par celle du milieu.
+function ns.prerequisManquants(zone, base, rendue, race, classe, ecartees)
+  local t = {}
+  for id, q in pairs(base) do
+    if q.zone == zone and ns.peutPrendre(q, race, classe) and not rendue(id) and not ecartees[id] then
+      local amorce = {}
+      for _, a in ipairs(q.amorces or {}) do amorce[a] = true end
+      local function dehors(p) return base[p].zone ~= zone and not amorce[p] end
+      for _, p in ipairs(q.prerequis or {}) do
+        if base[p] and dehors(p) and not rendue(p) then t[#t + 1] = { quete = id, prerequis = p } end
+      end
+      local premier, couvert = nil, false
+      for _, p in ipairs(q.prerequis_un or {}) do
+        if base[p] then
+          if rendue(p) or not dehors(p) then couvert = true else premier = premier or p end
+        end
+      end
+      if premier and not couvert then t[#t + 1] = { quete = id, prerequis = premier } end
+    end
+  end
+  table.sort(t, function(a, b) return a.quete < b.quete or a.quete == b.quete and a.prerequis < b.prerequis end)
+  return t
+end
+
+-- La chaîne d'un prérequis manquant (#27) : lui et ceux qu'il demande, de proche en proche, hors de la zone de la
+-- Compagnie (prerequis : tous ; prerequis_un : le premier de la base), la première à faire d'abord.
+-- ponytail: tirée de la base, pas de ce que le membre a déjà fait de la chaîne ; il le voit en jeu.
+function ns.chaine(base, p, zone)
+  local t, vues = {}, {}
+  local function visiter(id)
+    vues[id] = true
+    local q = base[id]
+    local avant = {}
+    for _, a in ipairs(q.prerequis or {}) do avant[#avant + 1] = a end
+    for _, a in ipairs(q.prerequis_un or {}) do if base[a] then avant[#avant + 1] = a break end end
+    for _, a in ipairs(avant) do
+      if base[a] and base[a].zone ~= zone and not vues[a] then visiter(a) end
+    end
+    t[#t + 1] = id
+  end
+  if base[p] then visiter(p) end
   return t
 end

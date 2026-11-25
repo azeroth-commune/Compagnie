@@ -5,11 +5,12 @@
 --             avant = { [idQuête] = true } (mes quêtes d'avant encore dans mon journal), renduesAvant = { [idQuête] = true },
 --             auberge = "Comté-de-l'Or", liaison = heure serveur de la liaison, finRecharge = heure serveur où la pierre
 --             de foyer est prête (les trois du foyer, #9 : nil quand inconnus, ou pierre prête),
---             zoneCompagnie = { zone = areaID, date, par = "Léo" } (#24 : la zone de la Compagnie, nil sans choix) }
+--             zoneCompagnie = { zone = areaID, date, par = "Léo" } (#24 : la zone de la Compagnie, nil sans choix),
+--             prerequis = { zone = areaID, manquants = { { quete, prerequis }, … } } (#27 : mes prérequis manquants) }
 -- Le texte des objectifs ne part jamais (il porte un code de grammaire du jeu, « |4…; ») : seulement les nombres, dans
 -- l'ordre des objectifs ; chacun retrouve le texte dans son propre journal (Calcul.lua le prend chez qui l'a).
 -- Corps encodé : « niveau#quête;quête…#rendue,rendue…#zone=id,id;zone=id…#écartée;écartée…#auberge#liaison#fin
--- #avant,avant…#renduesAvant,renduesAvant…#zone:date:par »,
+-- #avant,avant…#renduesAvant,renduesAvant…#zone:date:par#zone=quête:prérequis,… »,
 -- une quête « id:finie(0|1)[:fait/total…] », ids triés. Le 4e champ (#13) range les quêtes par zone (l'en-tête de zone de mon journal), zones triées ; vide si
 -- aucune quête n'a de zone. Une zone : 1 à MAX_ZONE octets, ni caractère de contrôle, ni « | » (codes du chat), ni
 -- séparateur du format ; un en-tête de mon journal qui ne l'est pas ne part pas (la quête part sans zone). Le 5e champ
@@ -24,7 +25,9 @@
 -- Les 9e et 10e champs (#20) : mes quêtes d'avant (parmi les quêtes de l'état : une autre fait rejeter l'état), et
 -- les quêtes rendues avant mon entrée dans la Compagnie (le 3e champ : celles rendues depuis, vues par l'add-on).
 -- Le 11e champ (#24) : la zone de la Compagnie telle que je la connais, « areaID:date:par » (mêmes règles qu'une
--- décision sur une quête écartée), vide sans zone choisie.
+-- décision sur une quête écartée), vide sans zone choisie. Le 12e (#27) : mes prérequis manquants pour la zone de la
+-- Compagnie, « zone=quête:prérequis,quête:prérequis… » (zone : celle qu'ils couvrent ; « zone » seule : rien ne manque ;
+-- vide : pas de zone), au plus MAX_PREREQUIS, les premiers par quête ; jamais mes quêtes rendues (trop lourd).
 -- Messages d'add-on (préfixe Compagnie) : « E;idCompagnie;envoi/i/n;morceau » (un état en n morceaux bornés à 255
 -- octets) et « D;idCompagnie » (demande d'état). L'expéditeur (de) est le GUID que Compagnie.lua tient du serveur.
 -- Donnée reçue entre membres (CONTEXT-MAP) : servie telle quelle, mais lue strictement (un champ mal formé et tout l'état
@@ -32,7 +35,9 @@
 local _, ns = ...
 local MAX_QUETES, MAX_OBJECTIFS, MAX_RENDUES, MAX_MORCEAUX, DEBIT = 60, 20, 300, 10, 60 -- DEBIT : messages / minute
 local MAX_ZONE = 48 -- octets : « Contreforts de Hautebrande » en fait 26
-local MAX_ECARTEES = 30 -- un journal plein (25 quêtes) + 30 décisions tient dans MAX_MORCEAUX (check.lua)
+-- Un journal plein (25 quêtes) + 20 décisions + la zone, les prérequis et la liste des membres tient dans MAX_MORCEAUX
+-- (check.lua) ; 20 et non plus 30 : une décision emporte désormais toute la chaîne de la quête (#27).
+local MAX_ECARTEES, MAX_PREREQUIS = 20, 8
 local AVENIR, OUBLI = 86400, 7 * 86400 -- secondes : une décision à plus d'un jour est rejetée ; une remise oubliée à 7 jours
 ns.DELAI_ENVOI = 3 -- secondes : une rafale d'événements part en un seul envoi
 
@@ -66,6 +71,16 @@ local function decision(d, cle)
   return d and table.concat({ d[cle], d.date, zoneValide(d.par) and d.par or "?" }, ":") or ""
 end
 
+local function prerequis(p)
+  if not p then return "" end
+  local t = {}
+  for i, x in ipairs(p.manquants) do
+    if i > MAX_PREREQUIS then break end -- ponytail: au-delà, les suivants partiront quand les premiers seront faits
+    t[i] = x.quete .. ":" .. x.prerequis
+  end
+  return p.zone .. (#t > 0 and "=" .. table.concat(t, ",") or "")
+end
+
 function ns.encoder(etat)
   local quetes, rendues, zones = {}, {}, {}
   for _, id in ipairs(trier(etat.quetes)) do
@@ -93,14 +108,14 @@ function ns.encoder(etat)
   return (etat.niveau or 0) .. "#" .. table.concat(quetes, ";") .. "#" .. table.concat(rendues, ",") .. "#" ..
     table.concat(parZone, ";") .. "#" .. table.concat(ecartees, ";") .. "#" ..
     (zoneValide(etat.auberge) and etat.auberge or "") .. "#" .. (etat.liaison or "") .. "#" .. (etat.finRecharge or "") ..
-    "#" .. table.concat(avant, ",") .. "#" .. table.concat(trier(etat.renduesAvant), ",") .. "#" .. decision(etat.zoneCompagnie, "zone")
+    "#" .. table.concat(avant, ",") .. "#" .. table.concat(trier(etat.renduesAvant), ",") .. "#" .. decision(etat.zoneCompagnie, "zone") .. "#" .. prerequis(etat.prerequis)
 end
 
 -- L'état, ou nil au moindre champ mal formé. maintenant : mon heure serveur (nil : pas de contrôle des dates, les tests
 -- du format).
 function ns.decoder(corps, maintenant)
   local f = couper(corps, "#")
-  local niveau = #f == 11 and entier(f[1], 200)
+  local niveau = #f == 12 and entier(f[1], 200)
   if not niveau or niveau < 1 then return end
   local etat = { niveau = niveau, quetes = {}, rendues = {}, ecartees = {}, avant = {}, renduesAvant = {} }
   local liste = f[2] == "" and {} or couper(f[2], ";")
@@ -154,6 +169,19 @@ function ns.decoder(corps, maintenant)
     if #c ~= 3 or not (z and z >= 1 and date and date >= 1) or not zoneValide(c[3])
       or (maintenant and date > maintenant + AVENIR) then return end
     etat.zoneCompagnie = { zone = z, date = date, par = c[3] }
+  end
+  if f[12] ~= "" then
+    local z, liste = f[12]:match("^(%d+)=?(.*)$")
+    z = z and entier(z, 2147483647)
+    if not (z and z >= 1) or (liste == "" and f[12]:find("=", 1, true)) then return end
+    local manquants = {}
+    for _, x in ipairs(liste == "" and {} or couper(liste, ",")) do
+      local q, p = x:match("^(%d+):(%d+)$")
+      q, p = q and entier(q, 2147483647), p and entier(p, 2147483647)
+      if not (q and p and q >= 1 and p >= 1) or #manquants >= MAX_PREREQUIS then return end
+      manquants[#manquants + 1] = { quete = q, prerequis = p }
+    end
+    etat.prerequis = { zone = z, manquants = manquants }
   end
   local vues = {}
   for _, champ in ipairs(f[4] == "" and {} or couper(f[4], ";")) do
@@ -266,7 +294,7 @@ function ns.membresDuCalcul(db, moi, monEtat, presents)
     local etat = m.guid == moi and monEtat or (db.etats and db.etats[m.guid]) or { quetes = {} }
     liste[i] = { nom = m.guid, niveau = etat.niveau, quetes = etat.quetes, rendues = etat.rendues,
       renduesAvant = etat.renduesAvant, avant = etat.avant, auberge = etat.auberge, liaison = etat.liaison, finRecharge = etat.finRecharge,
-      absent = m.guid ~= moi and not presents[m.guid] }
+      prerequis = etat.prerequis, absent = m.guid ~= moi and not presents[m.guid] }
   end
   return liste
 end
@@ -282,7 +310,7 @@ function ns.corriger(etat, ids, surQuete)
     elseif sur == true and not quetes[id] then quetes[id] = { finie = false, objectifs = {} } end
   end
   return { nom = etat.nom, niveau = etat.niveau, quetes = quetes, rendues = etat.rendues, renduesAvant = etat.renduesAvant,
-    avant = etat.avant,
+    avant = etat.avant, prerequis = etat.prerequis,
     auberge = etat.auberge, liaison = etat.liaison, finRecharge = etat.finRecharge, absent = etat.absent }
 end
 

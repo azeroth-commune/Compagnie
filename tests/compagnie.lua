@@ -2,10 +2,20 @@
 -- Le groupe du jeu est simulé en bouchonnant les appels du jeu (Léo dans party1) ; les messages d'add-on envoyés sont
 -- retenus, ceux de Léo arrivent par l'événement CHAT_MSG_ADDON du cadre CompagnieMessages.
 local LEO, MIRA = "Player-1-0000ABCD", "Player-1-0000BCDE"
--- FIN : les champs d'un état ajoutés après le 10e (#24 : la zone de la Compagnie), vides.
-local FIN = "#"
+-- Les champs d'un état ajoutés après le 10e, vides : APRES_ZONE, ceux après la zone de la Compagnie (#27 : mes
+-- prérequis manquants) ; FIN, tous (#24 : la zone, puis APRES_ZONE).
+local APRES_ZONE = "#"
+local FIN = "#" .. APRES_ZONE
 
 local function moi() return { guid = UnitGUID("player"), nom = AzerothCommune.Personnage().nom } end
+
+-- La base des quêtes du socle est fausse pendant tous les tests (les ids des tests, 1001…, sont de vraies quêtes de la
+-- réserve, avec leurs chaînes) : vide, sauf le temps d'un avecBase.
+local baseTest, lireDuSocle = {}, AzerothCommune.Lire
+AzerothCommune.Lire = function(self, t, ...)
+    if t == "base des quêtes" then return baseTest, { provenance = "source externe" } end
+    return lireDuSocle(self, t, ...)
+end
 
 -- Les lignes affichées de la liste des membres, dans l'ordre : { nom, presence, retirer = bouton ou nil }.
 local function lignes()
@@ -1242,15 +1252,11 @@ end)
 ---------------------------------------------------------------------------------------------------
 -- Le bandeau d'abandon (#25) et la base des quêtes du socle (fausse, le temps d'un test).
 
--- La base des quêtes vaut base le temps de f (AzerothCommune:Lire bouchonné pour ce type seul).
+-- La base des quêtes vaut base le temps de f.
 local function avecBase(base, f)
-    local vrai = AzerothCommune.Lire
-    AzerothCommune.Lire = function(self, t, ...)
-        if t == "base des quêtes" then return base, { provenance = "source externe" } end
-        return vrai(self, t, ...)
-    end
+    baseTest = base
     local ok, err = pcall(f)
-    AzerothCommune.Lire = vrai
+    baseTest = {}
     if not ok then error(err, 0) end
 end
 
@@ -1341,17 +1347,18 @@ test("zone de la Compagnie (#24) : le menu, une zone grisée sous le niveau ; ch
                         "|cff808080Bois de la Pénombre (niv. 20)|r", table.concat(e, "|"))
                     local t = dits(function() assertTrue(choisir(racine, "Sombrivage (niv. 10)")) end)
                     assertTrue(contient(t, "Tu as choisi Sombrivage pour la Compagnie."), t)
-                    assertEquals("Zone de la Compagnie : Sombrivage", CompagnieZoneBouton:GetText(), "en tête du suivi, sur son bouton")
+                    -- Léo n'a pas encore dit ses prérequis pour Sombrivage : à contrôler.
+                    assertEquals("Zone : Sombrivage (Léo à contrôler)", CompagnieZoneBouton:GetText(), "en tête du suivi, sur son bouton")
                     assertEquals(148, CompagnieDB.zoneCompagnie.zone)
                     -- Une zone grisée se choisit aussi.
                     dits(function() choisir(menuDe(function() CompagnieZoneBouton:Click() end), "|cff808080Bois de la Pénombre (niv. 20)|r") end)
-                    assertEquals("Zone de la Compagnie : Bois de la Pénombre", CompagnieZoneBouton:GetText())
+                    assertEquals("Zone : Bois de la Pénombre (Léo à contrôler)", CompagnieZoneBouton:GetText())
                     -- Léo choisit la Marche de l'Ouest après moi : le chat le dit, le suivi suit.
                     t = dits(function()
-                        chuchote("E;essai;1/1/1;10#1001:0#########40:" .. math.floor(GetServerTime() + 60) .. ":Léo")
+                        chuchote("E;essai;1/1/1;10#1001:0#########40:" .. math.floor(GetServerTime() + 60) .. ":Léo#40")
                     end)
                     assertTrue(contient(t, "Léo a choisi Marche de l'Ouest pour la Compagnie."), t)
-                    assertEquals("Zone de la Compagnie : Marche de l'Ouest", CompagnieZoneBouton:GetText())
+                    assertEquals("Zone : Marche de l'Ouest", CompagnieZoneBouton:GetText(), "Léo l'a contrôlée : rien à contrôler")
                     -- J'entre en Forêt d'Elwynn (pas la zone de la Compagnie) : une ligne propose de la choisir, une seule fois.
                     ici = "Forêt d'Elwynn"
                     t = dits(function() evenement("ZONE_CHANGED_NEW_AREA") end)
@@ -1367,6 +1374,54 @@ test("zone de la Compagnie (#24) : le menu, une zone grisée sous le niveau ; ch
                     t = dits(function() SlashCmdList.COMPAGNIE("zone") end)
                     assertTrue(contient(t, "Tu as choisi Forêt d'Elwynn pour la Compagnie."), t)
                     assertEquals(12, CompagnieDB.zoneCompagnie.zone)
+                end)
+            end)
+        end)
+    end)
+    eteindre()
+end)
+
+---------------------------------------------------------------------------------------------------
+-- Le contrôle des prérequis (#27).
+
+test("prérequis manquant (#27) : l'écart se dessine dans À faire, sa bulle dit tout ; clic droit, Écarter : il disparaît", function()
+    local BASE = baseDeZones({
+        [952] = { nom = "Bosquet des Anciens", zone = 148, niveau_requis = 6, prerequis_un = { 940 } },
+        [937] = { nom = "La clairière enchantée", zone = 141, suites = { 98392 }, donneur = { pnj = 3519, nom = "Sentinelle Arynia" } },
+        [98392] = { nom = "Les ténèbres dans la clairière", zone = 141, prerequis_un = { 937 }, suites = { 98398 } },
+        [98398] = { nom = "L'arbre de l'Oracle", zone = 141, prerequis_un = { 98392 }, suites = { 940 } },
+        [940] = { nom = "Teldrassil", zone = 141, prerequis_un = { 98398 }, suites = { 952 } } })
+    NOMS_ZONES[141] = "Teldrassil"
+    avecZones(function()
+        avecBase(BASE, function()
+            avecGroupe({}, false, function()
+                avecJournal({}, function()
+                    fabriquer({ guid = LEO, nom = "Léo Lame" })
+                    CompagnieDB.modeCompagnie = nil
+                    -- Léo, l'elfe, a fait Teldrassil : son état couvre Sombrivage, rien ne lui manque.
+                    CompagnieDB.etats = { [LEO] = { niveau = 12, rendues = {}, quetes = {}, prerequis = { zone = 148, manquants = {} } } }
+                    CompagnieDB.zoneCompagnie = { zone = 148, date = 1, par = "Léo" }
+                    charger()
+                    assertEquals("Zone : Sombrivage", CompagnieZoneBouton:GetText())
+                    local b = assert(bouton("CompagnieSuiviAFaire1"), "un écart À faire")
+                    assertEquals("Avant Bosquet des Anciens : 4 quêtes à Teldrassil", b:GetText())
+                    assertTrue(not b:IsEnabled(), "rien à cliquer : on va faire la chaîne")
+                    assertEquals("« Bosquet des Anciens » demande avant 4 quêtes à Teldrassil, à commencer par « La clairière enchantée » " ..
+                        "(Sentinelle Arynia). Manque à toi.", b.details)
+                    -- Mon état porte le prérequis manquant, avec la zone qu'il couvre.
+                    avecLeo(function(envoyes)
+                        evenement("QUEST_LOG_UPDATE")
+                        ecouler(5)
+                        assertTrue(envoyes[#envoyes].texte:find("#148=952:940$") ~= nil, envoyes[#envoyes].texte)
+                    end)
+                    -- Clic droit sur la ligne (inactive) : Écarter le Bosquet ; l'écart disparaît, la chaîne avec lui.
+                    local racine = menuDe(function() b:GetScript("OnMouseUp")(b, "RightButton") end)
+                    assertTrue(choisir(racine, "Écarter pour la Compagnie"), "le menu Écarter")
+                    local _, popup = StaticPopup_Visible("COMPAGNIE_ECARTER")
+                    local t = dits(function() popup.button1:Click() end)
+                    assertTrue(contient(t, "Tu as écarté « Bosquet des Anciens » pour la Compagnie."), t)
+                    assertNil(bouton("CompagnieSuiviAFaire1"), "plus d'écart")
+                    assertTrue(CompagnieDB.ecartees[952].ecartee and not CompagnieDB.ecartees[940], "une seule décision, la chaîne suit")
                 end)
             end)
         end)
