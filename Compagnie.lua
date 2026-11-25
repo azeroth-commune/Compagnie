@@ -162,7 +162,8 @@ function monEtat()
       end
       local finie = C_QuestLog.IsComplete(id)
       if type(finie) ~= "boolean" then finie = toutFini end
-      quetes[id] = { finie = finie, objectifs = objectifs, zone = zone, partageable = C_QuestLog.IsPushableQuest(id) == true }
+      quetes[id] = { finie = finie, objectifs = objectifs, zone = zone, partageable = C_QuestLog.IsPushableQuest(id) == true,
+        personnelle = e.db.personnelles and e.db.personnelles[id] } -- marquée personnelle à la main (#7)
       titres[id] = info.title
     end
   end
@@ -186,7 +187,8 @@ function monEtat()
   local auberge, f = GetBindLocation(), e.db.foyer
   local debut, recharge = C_Container.GetItemCooldown(PIERRE)
   local reste = (debut or 0) > 0 and (recharge or 0) > 1.5 and debut + recharge - GetTime() or 0 -- 1.5 s : temps global
-  return { niveau = UnitLevel("player"), quetes = quetes, rendues = rendues, renduesAvant = renduesAvant, avant = avant,
+  return { niveau = UnitLevel("player"), race = select(3, UnitRace("player")), classe = select(3, UnitClass("player")), -- #7
+    quetes = quetes, rendues = rendues, renduesAvant = renduesAvant, avant = avant,
     ecartees = e.db.ecartees, -- les décisions de la Compagnie (#21), telles que je les connais
     zoneCompagnie = e.db.zoneCompagnie, -- la zone de la Compagnie (#24), telle que je la connais
     prerequis = mesPrerequis(), -- mes prérequis manquants pour cette zone (#27)
@@ -356,7 +358,7 @@ local function base() return (AC:Lire("base des quêtes")) or {} end
 local function calculer()
   local liste, presents, unites = membresDuJeu()
   local zc = e.db.zoneCompagnie
-  return ns.calculer(liste, GetServerTime(), e.db.ecartees, base(), zc and zc.zone), presents, unites
+  return ns.calculer(liste, GetServerTime(), e.db.ecartees, base(), zc and zc.zone, e.db.niveauxRequis), presents, unites
 end
 local function titre(id)
   local q = titres[id] or C_QuestLog.GetTitleForQuestID(id)
@@ -436,10 +438,24 @@ local function proposerEcart(id)
   if p then p.data = id end
 end
 -- Écarter est rare : un clic droit sur une quête (suivi, liste À faire) ouvre un menu, puis la confirmation.
-local function menuEcarter(owner, id)
+-- Quête personnelle (#7), dans le même menu pour une quête de mon journal : la marquer à la main (sans Questie, la base
+-- des quêtes ne dit pas tout : une quête de métier…), coché tant qu'elle l'est ; le marquage part avec mon état.
+-- sansEcarter : ma quête marquée, à part : le menu ne propose que de la démarquer.
+-- ponytail: CompagnieDB.personnelles n'est jamais purgé (quelques ids) ; reprise plus tard, la quête est encore marquée.
+local function basculerPersonnelle(id)
+  e.db.personnelles = e.db.personnelles or {}
+  e.db.personnelles[id] = not e.db.personnelles[id] or nil
+  ns.signaler(e, false, envoi)
+  redessiner()
+end
+local function menuEcarter(owner, id, sansEcarter)
   MenuUtil.CreateContextMenu(owner, function(_, root)
     root:CreateTitle(titre(id))
-    root:CreateButton("Écarter pour la Compagnie", function() proposerEcart(id) end)
+    if not sansEcarter then root:CreateButton("Écarter pour la Compagnie", function() proposerEcart(id) end) end
+    if C_QuestLog.GetLogIndexForQuestID(id) then
+      root:CreateCheckbox("Quête personnelle (à moi seul)", function() return e.db.personnelles and e.db.personnelles[id] end,
+        function() basculerPersonnelle(id) end)
+    end
   end)
 end
 local function bulleEcarter(owner, details) -- details : ce que dit la ligne en entier (prérequis manquant, #27)
@@ -513,7 +529,9 @@ local function blocsSuivi(calc, presents)
       local lignes = { "|cffc0c0c0" .. titre(a.quete) .. " (" .. prenom(a.membre) .. (a.ecartee and ", écartée" or "") .. ")|r" }
       for i, o in ipairs(a.objectifs) do lignes[#lignes + 1] = ligneObjectif(i, o) end
       if a.aRendre then lignes[#lignes + 1] = "  |cff59cc73À rendre|r" end
-      blocs[#blocs + 1] = { texte = table.concat(lignes, "\n") }
+      -- Ma quête marquée personnelle (#7) : le clic droit propose de la démarquer.
+      local marquee = a.membre == moi() and e.db.personnelles and e.db.personnelles[a.quete]
+      blocs[#blocs + 1] = { texte = table.concat(lignes, "\n"), quete = marquee and a.quete or nil, sansEcarter = marquee }
     end
   end
   if #blocs == 0 then
@@ -530,6 +548,8 @@ end
 -- Écarter (#21).
 -- Rendue en avance (#8) : un membre l'a rendue avant que je l'aie finie ; rien à cliquer (je la finis), sans dire qui.
 -- Foyer différent (#9) : « Lie-toi à l'auberge de … » ; rien à cliquer (on se lie chez l'aubergiste).
+-- Niveau insuffisant (#7) : « Au niveau 10 : Les Kobolds », la bulle dit « au niveau 10 pour toute la Compagnie », sans
+-- dire qui ; rien à cliquer (pas de partage impossible).
 local function abandonner(id)
   local avant = C_QuestLog.GetSelectedQuest()
   C_QuestLog.SetSelectedQuest(id)
@@ -561,6 +581,7 @@ end
 -- entre-temps n'est plus dans la liste : sautée. Rend l'écart, combien d'autres restent dans ce tour, et si le partage
 -- peut atteindre quelqu'un (le jeu ne partage qu'au groupe).
 local partagees = {} -- [idQuête] = true : partagée d'un clic pendant ce tour ; rien n'est sauvegardé
+local dernierPartage -- { quete, t = GetTime() } : mon dernier partage d'un clic (#7)
 local function suivante(liste, unites)
   local libres = {}
   for _, x in ipairs(liste) do if not partagees[x.quete] then libres[#libres + 1] = x end end
@@ -598,7 +619,7 @@ local function remplirAFaire(l, ecarts, unites)
         if bouton == "RightButton" and self.ecartable then menuEcarter(self, self.ecartable) end
       end)
       b:SetScript("OnClick", function(self)
-        if self.x.type == "avance" or self.x.type == "foyer" or self.x.type == "prerequis" then return end
+        if self.x.type == "avance" or self.x.type == "foyer" or self.x.type == "prerequis" or self.x.type == "niveau" then return end
         if self.x.type == "ecartee" then
           local p = StaticPopup_Show("COMPAGNIE_ABANDON", titre(self.x.quete))
           if p then p.data = self.x.quete end
@@ -607,12 +628,13 @@ local function remplirAFaire(l, ecarts, unites)
         local index = C_QuestLog.GetLogIndexForQuestID(self.quete)
         if not index then return end -- plus dans mon journal : rien à partager
         QuestLogPushQuest(index)
+        dernierPartage = { quete = self.quete, t = GetTime() } -- un refus pour niveau insuffisant suivra peut-être (#7)
         partagees[self.quete] = true
         redessiner() -- le bouton passe à la suivante
       end)
       l.boutons[i] = b
     end
-    b.x, b.ecartable, b.details = x, (x.type == "avance" or x.type == "prerequis") and x.quete or nil, nil
+    b.x, b.ecartable, b.details = x, (x.type == "avance" or x.type == "prerequis" or x.type == "niveau") and x.quete or nil, nil
     if x.type == "prerequis" then
       local n = #x.chaine
       local quetes = n == 1 and "1 quête" or n .. " quêtes"
@@ -627,6 +649,10 @@ local function remplirAFaire(l, ecarts, unites)
       b:Enable()
     elseif x.type == "avance" then
       b:SetText("Rendue en avance : " .. titre(x.quete))
+      b:Disable()
+    elseif x.type == "niveau" then
+      b:SetText(("Au niveau %d : %s"):format(x.niveau, titre(x.quete))) -- comme « Partager : … » ; la phrase, dans la bulle
+      b.details = ("« %s » : au niveau %d pour toute la Compagnie."):format(titre(x.quete), x.niveau)
       b:Disable()
     elseif x.type == "foyer" then
       local voyelle = x.auberge:find("^[AEIOUYaeiouy]") or x.auberge:sub(1, 2) == "É"
@@ -693,12 +719,18 @@ local function placerLignes(blocs)
       l:RegisterForDrag("LeftButton")
       l:SetScript("OnDragStart", function() f:StartMoving() end)
       l:SetScript("OnDragStop", function() f:StopMovingOrSizing(); placerPierre() end)
-      l:SetScript("OnClick", function(self) if self.quete then menuEcarter(self, self.quete) end end)
-      l:SetScript("OnEnter", function(self) if self.quete then bulleEcarter(self) end end)
+      l:SetScript("OnClick", function(self) if self.quete then menuEcarter(self, self.quete, self.sansEcarter) end end)
+      l:SetScript("OnEnter", function(self)
+        if self.sansEcarter then
+          GameTooltip:SetOwner(self, "ANCHOR_LEFT")
+          GameTooltip:SetText("Clic droit : quête personnelle", 1, 1, 1, true)
+          GameTooltip:Show()
+        elseif self.quete then bulleEcarter(self) end
+      end)
       l:SetScript("OnLeave", function() GameTooltip:Hide() end)
       lignesSuivi[i] = l
     end
-    l.quete = b.quete
+    l.quete, l.sansEcarter = b.quete, b.sansEcarter
     l.texte:SetText(b.texte)
     local h = math.max(1, l.texte:GetStringHeight())
     l:SetHeight(h)
@@ -1234,13 +1266,35 @@ hooksecurefunc("StaticPopup_Show", bandeauAbandon)
 ---------------------------------------------------------------------------------------------------
 -- Messages d'add-on. Au groupe du jeu : d'un expéditeur que le serveur y nomme (son GUID vient du groupe) ; en
 -- chuchotement : d'un membre, reconnu à son nom « Prénom Nom » donné par le serveur, et seulement pour les états.
+-- Un partage refusé pour niveau insuffisant (#7) : le jeu dit seulement « Léo a un niveau trop bas… »
+-- (ERR_QUEST_PUSH_LOW_LEVEL_S) ; la quête est mon dernier partage (moins de 10 s), et le niveau requis est au moins celui
+-- de Léo (son dernier état connu) + 1 : appris dans CompagnieDB.niveauxRequis, il fait l'écart niveau insuffisant même
+-- sans la base des quêtes. Seul le prénom compte (le jeu peut le donner sans le nom).
+local function motif(gabarit) -- un texte du jeu à un « %s », en motif Lua qui capture le nom
+  return gabarit and "^" .. gabarit:gsub("[%^%$%(%)%%%.%[%]%*%+%-%?]", "%%%0"):gsub("%%%%s", "(.+)") .. "$"
+end
+local function partageRefuse(texte)
+  local m = motif(ERR_QUEST_PUSH_LOW_LEVEL_S)
+  local nom = m and dernierPartage and GetTime() - dernierPartage.t < 10 and texte:match(m)
+  if not nom then return end
+  nom = nom:match("^(%S+)")
+  for _, x in ipairs((membresDuJeu())) do
+    if x.nom ~= moi() and x.niveau and prenom(x.nom) == nom then
+      local id = dernierPartage.quete
+      e.db.niveauxRequis = e.db.niveauxRequis or {}
+      e.db.niveauxRequis[id] = math.max(e.db.niveauxRequis[id] or 0, x.niveau + 1)
+      return redessiner()
+    end
+  end
+end
+
 local MONJOURNAL = { QUEST_LOG_UPDATE = true, QUEST_TURNED_IN = true, PLAYER_LEVEL_UP = true, UNIT_QUEST_LOG_CHANGED = true,
   BAG_UPDATE_COOLDOWN = true, HEARTHSTONE_BOUND = true }
 local cadre = CreateFrame("Frame", "CompagnieMessages")
 for _, ev in ipairs({ "ADDON_LOADED", "PLAYER_ENTERING_WORLD", "CHAT_MSG_ADDON", "GROUP_ROSTER_UPDATE", "QUEST_LOG_UPDATE",
   "QUEST_ACCEPTED", "QUEST_TURNED_IN", "PLAYER_LEVEL_UP", "UNIT_QUEST_LOG_CHANGED", "PLAYER_REGEN_ENABLED", "ZONE_CHANGED_NEW_AREA",
   "QUEST_PROGRESS", "QUEST_COMPLETE", "QUEST_DETAIL", "QUEST_GREETING", "QUEST_FINISHED", "BAG_UPDATE_COOLDOWN",
-  "HEARTHSTONE_BOUND", "QUEST_ACCEPT_CONFIRM" }) do cadre:RegisterEvent(ev) end
+  "HEARTHSTONE_BOUND", "QUEST_ACCEPT_CONFIRM", "CHAT_MSG_SYSTEM" }) do cadre:RegisterEvent(ev) end
 cadre:SetScript("OnEvent", function(_, ev, a1, texte, canal, expediteur)
   if ev == "ADDON_LOADED" then
     if a1 == "Compagnie" then
@@ -1270,6 +1324,8 @@ cadre:SetScript("OnEvent", function(_, ev, a1, texte, canal, expediteur)
     remise = nil
     majBandeau()
     if ev == "QUEST_DETAIL" then accepterQuete() end
+  elseif ev == "CHAT_MSG_SYSTEM" then
+    if e.db.compagnie and type(a1) == "string" then partageRefuse(a1) end
   elseif ev == "QUEST_ACCEPT_CONFIRM" then
     confirmerEscorte(a1, texte)
   elseif ev == "QUEST_ACCEPTED" then

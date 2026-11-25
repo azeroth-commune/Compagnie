@@ -70,7 +70,7 @@ _Avoid_: remise anticipée
 Le niveau du membre le plus bas (même principe que l'avancement commun).
 
 **Quête personnelle**:
-Une quête que le jeu interdit aux autres membres de prendre (classe, métier, race) ; ce n'est pas un écart, la Compagnie l'accompagne, et son affichage nomme le membre concerné (comme celui d'une quête d'avant, ou d'une quête écartée qu'il garde).
+Une quête que le jeu interdit aux autres membres de prendre (classe, race, d'après la base des quêtes), ou qu'un membre a marquée personnelle (clic droit sur la quête : une quête de métier, ce que la base ne dit pas) ; ce n'est pas un écart, la Compagnie l'accompagne, et son affichage nomme le membre concerné (comme celui d'une quête d'avant, ou d'une quête écartée qu'il garde).
 _Avoid_: quête solo
 
 **Avancement commun**:

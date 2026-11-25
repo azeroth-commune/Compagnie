@@ -1,6 +1,8 @@
 -- Compagnie, les états des membres : encodage, réception, dernier état connu, envoi regroupé. La logique seule, sans
 -- aucun appel à l'API du jeu (vérifié par check.lua) ; Compagnie.lua lit mon journal en direct et transporte les messages.
--- Un état : { niveau = 35, quetes = { [idQuête] = { finie = false, objectifs = { { fait = 2, total = 10 }, … }, zone = "…" } },
+-- Un état : { niveau = 35, race = 1, classe = 2 (#7 : raceID, classID ; nil : inconnues),
+--             quetes = { [idQuête] = { finie = false, objectifs = { { fait = 2, total = 10 }, … }, zone = "…",
+--             personnelle = true (#7 : marquée à la main) } },
 --             rendues = { [idQuête] = true }, ecartees = { [idQuête] = { ecartee = true|false, date, par = "Léo" } },
 --             avant = { [idQuête] = true } (mes quêtes d'avant encore dans mon journal), renduesAvant = { [idQuête] = true },
 --             auberge = "Comté-de-l'Or", liaison = heure serveur de la liaison, finRecharge = heure serveur où la pierre
@@ -10,9 +12,9 @@
 --             liste = { date, membres = { { guid, nom }, … } } (#23 : la liste des membres) }
 -- Le texte des objectifs ne part jamais (il porte un code de grammaire du jeu, « |4…; ») : seulement les nombres, dans
 -- l'ordre des objectifs ; chacun retrouve le texte dans son propre journal (Calcul.lua le prend chez qui l'a).
--- Corps encodé : « niveau#quête;quête…#rendue,rendue…#zone=id,id;zone=id…#écartée;écartée…#auberge#liaison#fin
+-- Corps encodé : « niveau[:race:classe]#quête;quête…#rendue,rendue…#zone=id,id;zone=id…#écartée;écartée…#auberge#liaison#fin
 -- #avant,avant…#renduesAvant,renduesAvant…#zone:date:par#zone=quête:prérequis,…#date=serveur-id:nom,… »,
--- une quête « id:finie(0|1)[:fait/total…] », ids triés. Le 4e champ (#13) range les quêtes par zone (l'en-tête de zone de mon journal), zones triées ; vide si
+-- une quête « id:finie(0|1)[p][:fait/total…] » (p : marquée personnelle, #7), ids triés. Le 4e champ (#13) range les quêtes par zone (l'en-tête de zone de mon journal), zones triées ; vide si
 -- aucune quête n'a de zone. Une zone : 1 à MAX_ZONE octets, ni caractère de contrôle, ni « | » (codes du chat), ni
 -- séparateur du format ; un en-tête de mon journal qui ne l'est pas ne part pas (la quête part sans zone). Le 5e champ
 -- (#21) : les décisions de la Compagnie sur les quêtes écartées, telles que je les connais, « id:1|0:date:par » (1 :
@@ -95,7 +97,8 @@ end
 function ns.encoder(etat)
   local quetes, rendues, zones = {}, {}, {}
   for _, id in ipairs(trier(etat.quetes)) do
-    local q, t = etat.quetes[id], { id, etat.quetes[id].finie and 1 or 0 }
+    local q = etat.quetes[id]
+    local t = { id, (q.finie and 1 or 0) .. (q.personnelle and "p" or "") }
     for _, o in ipairs(q.objectifs or {}) do t[#t + 1] = o.fait .. "/" .. o.total end
     quetes[#quetes + 1] = table.concat(t, ":")
     if zoneValide(q.zone) then zones[q.zone] = zones[q.zone] or {}; table.insert(zones[q.zone], id) end
@@ -116,7 +119,8 @@ function ns.encoder(etat)
   for _, id in ipairs(trier(etat.avant)) do if etat.quetes and etat.quetes[id] then avant[#avant + 1] = id end end
   local parZone = {}
   for _, z in ipairs(trier(zones)) do parZone[#parZone + 1] = z .. "=" .. table.concat(zones[z], ",") end
-  return (etat.niveau or 0) .. "#" .. table.concat(quetes, ";") .. "#" .. table.concat(rendues, ",") .. "#" ..
+  local niveau = (etat.niveau or 0) .. (etat.race and etat.classe and ":" .. etat.race .. ":" .. etat.classe or "")
+  return niveau .. "#" .. table.concat(quetes, ";") .. "#" .. table.concat(rendues, ",") .. "#" ..
     table.concat(parZone, ";") .. "#" .. table.concat(ecartees, ";") .. "#" ..
     (zoneValide(etat.auberge) and etat.auberge or "") .. "#" .. (etat.liaison or "") .. "#" .. (etat.finRecharge or "") ..
     "#" .. table.concat(avant, ",") .. "#" .. table.concat(trier(etat.renduesAvant), ",") .. "#" .. decision(etat.zoneCompagnie, "zone") .. "#" .. prerequis(etat.prerequis) .. "#" .. listeMembres(etat.liste)
@@ -126,15 +130,18 @@ end
 -- du format).
 function ns.decoder(corps, maintenant)
   local f = couper(corps, "#")
-  local niveau = #f == 13 and entier(f[1], 200)
-  if not niveau or niveau < 1 then return end
-  local etat = { niveau = niveau, quetes = {}, rendues = {}, ecartees = {}, avant = {}, renduesAvant = {} }
+  local n, rc, race, classe = (#f == 13 and f[1] or ""):match("^(%d+)(:?(%d*):?(%d*))$")
+  local niveau = n and entier(n, 200)
+  race, classe = race and entier(race, 999), classe and entier(classe, 999)
+  if not niveau or niveau < 1 or rc ~= "" and not (race and classe and rc == ":" .. race .. ":" .. classe) then return end
+  local etat = { niveau = niveau, race = race, classe = classe, quetes = {}, rendues = {}, ecartees = {}, avant = {}, renduesAvant = {} }
   local liste = f[2] == "" and {} or couper(f[2], ";")
   if #liste > MAX_QUETES then return end
   for _, q in ipairs(liste) do
     local c = couper(q, ":")
     local id = entier(c[1], 2147483647) -- questID : entier 32 bits signé
-    if not id or id < 1 or etat.quetes[id] or (c[2] ~= "0" and c[2] ~= "1") or #c - 2 > MAX_OBJECTIFS then return end
+    local finie, perso = (c[2] or ""):match("^([01])(p?)$")
+    if not id or id < 1 or etat.quetes[id] or not finie or #c - 2 > MAX_OBJECTIFS then return end
     local objectifs = {}
     for k = 3, #c do
       local a, b = c[k]:match("^(%d+)/(%d+)$")
@@ -142,7 +149,7 @@ function ns.decoder(corps, maintenant)
       if not (a and b) or a > b then return end
       objectifs[k - 2] = { fait = a, total = b }
     end
-    etat.quetes[id] = { finie = c[2] == "1", objectifs = objectifs }
+    etat.quetes[id] = { finie = finie == "1", personnelle = perso == "p" or nil, objectifs = objectifs }
   end
   liste = f[5] == "" and {} or couper(f[5], ";")
   if #liste > MAX_ECARTEES then return end
@@ -347,7 +354,7 @@ function ns.membresDuCalcul(db, moi, monEtat, presents)
   for guid in pairs(db.etats or {}) do if not ns.membre(c, guid) then db.etats[guid] = nil end end
   for i, m in ipairs(c.membres) do
     local etat = m.guid == moi and monEtat or (db.etats and db.etats[m.guid]) or { quetes = {} }
-    liste[i] = { nom = m.guid, niveau = etat.niveau, quetes = etat.quetes, rendues = etat.rendues,
+    liste[i] = { nom = m.guid, niveau = etat.niveau, race = etat.race, classe = etat.classe, quetes = etat.quetes, rendues = etat.rendues,
       renduesAvant = etat.renduesAvant, avant = etat.avant, auberge = etat.auberge, liaison = etat.liaison, finRecharge = etat.finRecharge,
       prerequis = etat.prerequis, absent = m.guid ~= moi and not presents[m.guid] }
   end
@@ -364,7 +371,7 @@ function ns.corriger(etat, ids, surQuete)
     if sur == false then quetes[id] = nil
     elseif sur == true and not quetes[id] then quetes[id] = { finie = false, objectifs = {} } end
   end
-  return { nom = etat.nom, niveau = etat.niveau, quetes = quetes, rendues = etat.rendues, renduesAvant = etat.renduesAvant,
+  return { nom = etat.nom, niveau = etat.niveau, race = etat.race, classe = etat.classe, quetes = quetes, rendues = etat.rendues, renduesAvant = etat.renduesAvant,
     avant = etat.avant, prerequis = etat.prerequis,
     auberge = etat.auberge, liaison = etat.liaison, finRecharge = etat.finRecharge, absent = etat.absent }
 end

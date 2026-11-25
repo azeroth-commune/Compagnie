@@ -1,31 +1,39 @@
 -- Compagnie, le calcul de la Compagnie : une fonction pure, sans aucun appel à l'API du jeu (vérifié par check.lua).
 -- Entrée : la liste des membres, chacun avec son état (dernier état connu pour un absent) :
---   { nom = "Léo", niveau = 10, absent = true,
+--   { nom = "Léo", niveau = 10, race = 1, classe = 2 (raceID, classID du jeu ; nil : inconnues), absent = true,
 --     quetes = { [idQuête] = { finie = false, objectifs = { { texte = "Patte de loup", fait = 5, total = 8 }, … } } },
 --     avant = { [idQuête] = true } (ses quêtes d'avant, #20 : dans son journal à son entrée dans la Compagnie),
 --     rendues = { [idQuête] = true } (rendues depuis son entrée), renduesAvant = { [idQuête] = true } (avant),
 --     auberge = "Comté-de-l'Or", liaison = 1764000000, finRecharge = 1764002400 } (heures serveur ; nil : inconnu, ou
 --     pierre prête)
 --     (une quête peut porter sa zone : zone = "Forêt d'Elwynn", et partageable = true : seulement dans mon journal, lu
---     en direct, le jeu ne le dit que pour mes quêtes)
+--     en direct, le jeu ne le dit que pour mes quêtes ; personnelle = true : marquée à la main par le membre, #7)
 -- maintenant : l'heure serveur (pour la pierre de la Compagnie).
 -- ecartees : les décisions de la Compagnie (#21), { [idQuête] = { ecartee = true (false : remise), date, par = "Léo" } } ;
 --   une quête écartée emporte sa chaîne (#27, ns.ecarteesEffectives).
 -- base : la base des quêtes du socle ({ [id] = { zone, suites, prerequis, … } }, vide : aucune chaîne) ; zone : la zone
 --   de la Compagnie (#24, areaID, nil : pas de contrôle des prérequis) ; chaque membre porte alors ses prérequis
 --   manquants : prerequis = { zone = la zone qu'ils couvrent, manquants = { { quete, prerequis }, … } } (#27).
+-- appris : les niveaux requis appris quand un partage échoue (#7, { [idQuête] = niveau }), en plus de la base.
 -- Sortie : { niveau = 9, foyer = "Comté-de-l'Or", pierre = 2400 (secondes avant qu'elle soit prête ; 0 : prête),
 --           quetes = { [idQuête] = { objectifs = { … }, aRendre = false, enAttente = { "Léo" }, zone = … } },
---           aPart = { { quete = id, membre = "Léo", objectifs = { … }, aRendre = true, zone = …, ecartee = true } },
+--           aPart = { { quete = id, membre = "Léo", objectifs = { … }, aRendre = true, zone = …, ecartee = true,
+--                       personnelle = true } },
 --           aFaire = { { type = "partager", membre = "Virgile", quete = id, manquants = { "Léo" } },
 --                      { type = "ecartee", membre = "Léo", quete = id, par = "Virgile" },
 --                      { type = "avance", membre = "Léo", quete = id, par = { "Virgile" } },
 --                      { type = "foyer", membre = "Léo", auberge = "Comté-de-l'Or" },
+--                      { type = "niveau", membre = "Virgile", quete = id, niveau = 10 },
 --                      { type = "prerequis", membre = "Léo", quete = id, prerequis = id, chaine, zone, donneur, manquants,
 --                        tous, aControler } },
 --           aControler = { "Mira" } }
--- Les quêtes de la Compagnie sont celles qu'au moins un membre a en cours, sauf une quête écartée (#21) et une quête
--- d'avant (#20) pour tous ceux qui l'ont : elle est à part (aPart, chez chaque membre qui l'a, avec son avancement à lui),
+-- Une quête personnelle (#7) : le jeu interdit à un autre membre de la prendre (classes, races de la base des quêtes ;
+-- un membre de race ou de classe inconnue peut : rien n'est deviné), ou un membre qui l'a l'a marquée personnelle ; elle
+-- est à part chez chaque membre qui l'a, sans écart.
+-- ponytail: une quête de paladin dans une Compagnie de deux paladins et un guerrier est personnelle pour les deux
+-- paladins (chacun la sienne, à part) ; un avancement commun à un sous-groupe viendra si on le demande.
+-- Les quêtes de la Compagnie sont celles qu'au moins un membre a en cours, sauf une quête écartée (#21), une quête
+-- personnelle (#7) et une quête d'avant (#20) pour tous ceux qui l'ont : elle est à part (aPart, chez chaque membre qui l'a, avec son avancement à lui),
 -- sans faire attendre personne, sauf si tous les membres l'ont. Dès qu'un membre l'a prise après son entrée, elle est de
 -- la Compagnie : les quêtes d'avant des autres comptent normalement pour elle, et qui ne l'a pas reçoit « Partager ».
 -- Pour chaque quête de la Compagnie, membre par membre :
@@ -42,28 +50,42 @@ local _, ns = ...
 
 local function rendue(m, id) return m.rendues and m.rendues[id] or m.renduesAvant and m.renduesAvant[id] end
 
-function ns.calculer(membres, maintenant, ecartees, base, zone)
+local function dans(liste, x)
+  if not liste then return true end
+  for _, y in ipairs(liste) do if y == x then return true end end
+  return false
+end
+local function interdite(q, membres) -- un membre (race et classe connues) ne peut pas prendre la quête q de la base
+  for _, n in ipairs(q and membres or {}) do
+    if n.classe and not dans(q.classes, n.classe) or n.race and not dans(q.races, n.race) then return true end
+  end
+  return false
+end
+
+function ns.calculer(membres, maintenant, ecartees, base, zone, appris)
   base = base or {}
   local quetes, aPart, niveau, foyer, recent, pierre = {}, {}, nil, nil, 0, 0
-  local tenue, prise = {}, {} -- [id] = combien de membres l'ont en cours ; [id] = true : un membre l'a prise après son entrée
+  local tenue, prise, perso = {}, {}, {} -- [id] = combien de membres l'ont en cours ; [id] = true : un membre l'a prise
+  -- après son entrée ; [id] = true : personnelle (#7)
   for _, m in ipairs(membres) do
     if m.niveau and (not niveau or m.niveau < niveau) then niveau = m.niveau end -- un membre jamais entendu : sans niveau
     if m.auberge and (m.liaison or 0) > recent then foyer, recent = m.auberge, m.liaison end
     if m.finRecharge then pierre = math.max(pierre, m.finRecharge - maintenant) end
-    for id in pairs(m.quetes or {}) do
+    for id, q in pairs(m.quetes or {}) do
       tenue[id] = (tenue[id] or 0) + 1
       if not (m.avant and m.avant[id]) then prise[id] = true end
+      if q.personnelle or interdite(base[id], membres) then perso[id] = true end
     end
   end
   ecartees = ns.ecarteesEffectives(ecartees, base) -- avec les chaînes qu'elles emportent (#27)
   local function ecartee(id) return ecartees[id] ~= nil end
-  local function commune(id) return not ecartee(id) and (prise[id] or tenue[id] == #membres) end
+  local function commune(id) return not ecartee(id) and not perso[id] and (prise[id] or tenue[id] == #membres) end
   for id in pairs(tenue) do if commune(id) then quetes[id] = { objectifs = {}, aRendre = true, enAttente = {} } end end
   for _, m in ipairs(membres) do
     for id, q in pairs(m.quetes or {}) do
       if not commune(id) then
         aPart[#aPart + 1] = { quete = id, membre = m.nom, objectifs = q.objectifs or {}, aRendre = q.finie == true, zone = q.zone,
-          ecartee = ecartee(id) }
+          ecartee = ecartee(id), personnelle = perso[id] }
       end
     end
   end
@@ -95,7 +117,7 @@ function ns.calculer(membres, maintenant, ecartees, base, zone)
       end
     end
   end
-  local aFaire, aControler = ns.ecarts(membres, foyer, quetes, ecartees, base, zone)
+  local aFaire, aControler = ns.ecarts(membres, foyer, quetes, ecartees, base, zone, appris)
   return { niveau = niveau, foyer = foyer, pierre = pierre, quetes = quetes, aPart = aPart, aFaire = aFaire,
     aControler = aControler }
 end
@@ -107,6 +129,10 @@ end
 --     résorbée quand tous l'ont.
 --   - quête en avance : un membre l'a rendue pendant qu'un autre l'a encore, pas finie : chez celui-ci, l'écart dit ce
 --     qui s'est passé (par = qui l'a rendue, jamais affiché) ; résorbée quand il l'a finie.
+--   - niveau insuffisant (#7) : un membre qui ne l'a ni en cours ni rendue n'a pas le niveau requis (base des quêtes, ou
+--     appris quand un partage a échoué : le plus haut des deux) : chez chaque membre qui l'a, « au niveau 10 pour toute
+--     la Compagnie », à la place de « Partager » ; résorbé quand ce membre a le niveau (un membre sans niveau : jamais
+--     entendu, il ne retient pas).
 --   - foyer différent : un membre lié à une autre auberge que le foyer (sans quête : en tête de liste).
 --   - prérequis manquant (#27) : sur la zone de la Compagnie, chez chaque membre qui ne l'a pas fait : la quête
 --     débloquée, le prérequis et sa chaîne (ns.chaine), sa zone, le donneur de la première quête, les membres à qui il
@@ -116,7 +142,7 @@ end
 -- après l'entrée (rendues, pas renduesAvant) fait une quête en avance.
 -- Rend aussi les membres à contrôler (#27) : ceux dont l'état ne couvre pas la zone de la Compagnie (absent depuis le
 -- choix, jamais entendu) ; on ne sait pas ce qui leur manque, on ne leur prête rien.
-function ns.ecarts(membres, foyer, communes, ecartees, base, zone)
+function ns.ecarts(membres, foyer, communes, ecartees, base, zone, appris)
   local t, rendues = {}, {}
   for _, m in ipairs(membres) do
     if foyer and m.auberge and m.auberge ~= foyer then t[#t + 1] = { type = "foyer", membre = m.nom, auberge = foyer } end
@@ -128,12 +154,17 @@ function ns.ecarts(membres, foyer, communes, ecartees, base, zone)
       if d and d.ecartee then t[#t + 1] = { type = "ecartee", membre = m.nom, quete = id, par = d.par }
       elseif communes[id] then -- sinon une quête d'avant : aucun écart
         if rendues[id] and not q.finie then t[#t + 1] = { type = "avance", membre = m.nom, quete = id, par = rendues[id] } end
-        if q.partageable then
-          local manquants = {}
-          for _, n in ipairs(membres) do
-            if not (n.quetes and n.quetes[id] or rendue(n, id)) then manquants[#manquants + 1] = n.nom end
+        local requis = math.max(base[id] and base[id].niveau_requis or 0, appris and appris[id] or 0)
+        local manquants, bas = {}, false
+        for _, n in ipairs(membres) do
+          if not (n.quetes and n.quetes[id] or rendue(n, id)) then
+            manquants[#manquants + 1] = n.nom
+            bas = bas or (n.niveau or requis) < requis
           end
-          if #manquants > 0 then t[#t + 1] = { type = "partager", membre = m.nom, quete = id, manquants = manquants } end
+        end
+        if bas then t[#t + 1] = { type = "niveau", membre = m.nom, quete = id, niveau = requis }
+        elseif q.partageable and #manquants > 0 then
+          t[#t + 1] = { type = "partager", membre = m.nom, quete = id, manquants = manquants }
         end
       end
     end
@@ -186,11 +217,6 @@ end
 
 -- Un personnage de cette race et de cette classe (raceID, classID du jeu) peut-il prendre la quête q de la base ? (races,
 -- classes : listes d'IDs, nil : toutes ; une quête absente de la base : oui, rien n'est deviné.)
-local function dans(liste, x)
-  if not liste then return true end
-  for _, y in ipairs(liste) do if y == x then return true end end
-  return false
-end
 function ns.peutPrendre(q, race, classe) return not q or dans(q.races, race) and dans(q.classes, classe) end
 
 -- Les zones que propose le menu de la zone de la Compagnie (#24), d'après la base des quêtes (celles de la faction) :

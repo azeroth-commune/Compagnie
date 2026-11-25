@@ -486,7 +486,7 @@ test("une demande d'état reçoit le mien : au groupe du jeu, ou chuchoté hors 
             local m = envoyes[#envoyes]
             assertEquals("WHISPER", m.canal)
             assertEquals("Léo Lame", m.cible)
-            assertTrue(m.texte:find("^E;essai;%d+/1/1;%d+#1001:0:3/8##Forêt d'Elwynn=1001##[^#]*#%d*#%d*##" .. MIEN) ~= nil, m.texte)
+            assertTrue(m.texte:find("^E;essai;%d+/1/1;%d+[%d:]*#1001:0:3/8##Forêt d'Elwynn=1001##[^#]*#%d*#%d*##" .. MIEN) ~= nil, m.texte)
         end)
         avecLeo(function(envoyes)
             recu("D;essai")
@@ -1485,5 +1485,75 @@ test("Inviter (#23) : se dessine pour un joueur du groupe non membre ; l'invitat
             assertTrue(CompagnieDB.avant[1001], "mes quêtes d'avant sont notées à mon entrée")
         end)
     end)
+    eteindre()
+end)
+
+---------------------------------------------------------------------------------------------------
+-- Quête personnelle et niveau insuffisant (#7).
+
+test("quête personnelle et niveau insuffisant (#7) : à part et nommée, marquée à la main ; « au niveau 10 », appris d'un partage refusé", function()
+    local moiPrenom = moi().nom:match("^%S+")
+    local LUMIERE = { id = 2201, titre = "La lumière sacrée", partageable = true, objectifs = { { "Lettre : 0/1", 0, 1 } } }
+    local MOUSSE = { id = 2202, titre = "La mousse des grottes", partageable = true }
+    local CHAMPI = { id = 2203, titre = "Les champignons", partageable = true }
+    local PUITS = { id = 2204, titre = "Le vieux puits", partageable = true }
+    -- La lumière sacrée : ma classe seulement (Léo, classe 99, ne peut pas) ; la mousse : niveau 10 (Léo est niveau 9).
+    local BASE = { [2201] = { classes = { select(3, UnitClass("player")) or 2 } }, [2202] = { niveau_requis = 10 } }
+    avecBase(BASE, function()
+        avecJournal({ LUMIERE, MOUSSE, CHAMPI }, function()
+            fabriquer({ guid = LEO, nom = "Léo Lame" })
+            CompagnieDB.modeCompagnie, CompagnieDB.personnelles, CompagnieDB.niveauxRequis = nil, nil, nil
+            CompagnieDB.etats = { [LEO] = { niveau = 9, race = 1, classe = 99, rendues = {}, quetes = {} } }
+            avecLeo(function(envoyes)
+                charger()
+                local t = suivi()
+                local apart = t:sub(t:find("À part", 1, true) or #t + 1)
+                assertTrue(contient(apart, "La lumière sacrée (" .. moiPrenom .. ")") and contient(apart, "Lettre : 0/1"),
+                    "personnelle : à part, nommée, avec mon avancement : " .. t)
+                local n = bouton("CompagnieSuiviAFaire1")
+                assertEquals("Au niveau 10 : La mousse des grottes", n and n:GetText())
+                assertTrue(not n:IsEnabled(), "niveau insuffisant : rien à cliquer, pas de partage impossible")
+                assertEquals("Partager : Les champignons", bouton("CompagnieSuiviAFaire2"):GetText())
+                assertNil(bouton("CompagnieSuiviAFaire3"), "rien pour la quête personnelle")
+                -- Marquer les champignons personnels à la main : clic droit sur la quête, la case du menu.
+                assertTrue(choisir(menuDe(function() ligneSuivi("Les champignons"):Click("RightButton") end),
+                    "Quête personnelle (à moi seul)"), "le menu propose de la marquer")
+                t = suivi()
+                apart = t:sub(t:find("À part", 1, true) or #t + 1)
+                assertTrue(contient(apart, "Les champignons (" .. moiPrenom .. ")"), "marquée : à part : " .. t)
+                assertNil(bouton("CompagnieSuiviAFaire2"), "plus de « Partager »")
+                ecouler(5)
+                assertTrue(envoyes[#envoyes].texte:find("2203:0p", 1, true) ~= nil, "mon état porte le marquage : " .. envoyes[#envoyes].texte)
+                assertTrue(envoyes[#envoyes].texte:find("^E;essai;%d+/%d+/%d+;%d+:%d+:%d+#") ~= nil, "et ma race, ma classe : " .. envoyes[#envoyes].texte)
+                -- La démarquer : clic droit sur sa ligne à part, la case seule (pas d'Écarter).
+                local racine = menuDe(function() ligneSuivi("Les champignons"):Click("RightButton") end)
+                local textes = {}
+                for _, d in racine:EnumerateElementDescriptions() do textes[#textes + 1] = MenuUtil.GetElementText(d) or "" end
+                assertTrue(not contient(table.concat(textes, "|"), "Écarter"), "à part : pas d'Écarter : " .. table.concat(textes, "|"))
+                assertTrue(choisir(racine, "Quête personnelle (à moi seul)"))
+                assertEquals("Partager : Les champignons", bouton("CompagnieSuiviAFaire2"):GetText(), "démarquée : de nouveau à partager")
+                -- Léo passe niveau 10 : l'écart est résorbé, la mousse est à partager.
+                CompagnieDB.etats[LEO].niveau = 10
+                evenement("GROUP_ROSTER_UPDATE")
+                assertEquals("Partager : La mousse des grottes (+1)", bouton("CompagnieSuiviAFaire1"):GetText())
+            end)
+        end)
+    end)
+    -- Sans base : le partage du vieux puits est refusé, Léo (niveau 9) a un niveau trop bas : le niveau requis est appris.
+    avecJournal({ PUITS }, function()
+        CompagnieDB.etats[LEO].niveau = 9
+        avecLeo(function()
+            evenement("GROUP_ROSTER_UPDATE")
+            local b = bouton("CompagnieSuiviAFaire1")
+            assertEquals("Partager : Le vieux puits", b:GetText())
+            evenement("CHAT_MSG_SYSTEM", ERR_QUEST_PUSH_LOW_LEVEL_S:format("Léo"))
+            assertNil(CompagnieDB.niveauxRequis, "sans partage de ma part : rien n'est appris")
+            b:Click()
+            evenement("CHAT_MSG_SYSTEM", ERR_QUEST_PUSH_LOW_LEVEL_S:format("Léo"))
+            assertEquals(10, CompagnieDB.niveauxRequis and CompagnieDB.niveauxRequis[2204])
+            assertEquals("Au niveau 10 : Le vieux puits", bouton("CompagnieSuiviAFaire1"):GetText())
+        end)
+    end)
+    CompagnieDB.personnelles, CompagnieDB.niveauxRequis = nil, nil
     eteindre()
 end)

@@ -285,6 +285,61 @@ assert(#ns.suite(BASE_SUITE, 1004) == 0 and #ns.suite({}, 1001) == 0, "sans suit
 assert(ns.peutPrendre({ races = { 1, 3 } }, 3, 1) and not ns.peutPrendre({ races = { 1, 3 } }, 4, 1), "race")
 assert(ns.peutPrendre({ classes = { 2 } }, 1, 2) and not ns.peutPrendre({ classes = { 2 } }, 1, 1) and ns.peutPrendre(nil, 1, 1), "classe")
 
+-- Quête personnelle (#7) : le jeu interdit aux autres de la prendre (classe, race : la base des quêtes ; chaque membre
+-- porte sa race et sa classe). Pas d'écart ; à part chez tous, nommée, avec l'avancement de qui l'a.
+local PALADIN = 1780 -- « La lumière sacrée », paladins seulement (classID 2)
+local BASE_PALADIN = { [PALADIN] = { classes = { 2 } } }
+c = ns.calculer({
+  { nom = "Virgile", niveau = 12, race = 1, classe = 2, quetes = { [PALADIN] = { finie = false, partageable = true,
+    objectifs = { { texte = "Lettre", fait = 0, total = 1 } } } } },
+  { nom = "Léo", niveau = 12, race = 1, classe = 1, quetes = {} },
+}, 0, nil, BASE_PALADIN)
+assert(c.quetes[PALADIN] == nil, "quête de paladin : hors de l'avancement commun")
+assert(#c.aPart == 1 and c.aPart[1].quete == PALADIN and c.aPart[1].membre == "Virgile" and c.aPart[1].personnelle
+  and c.aPart[1].objectifs[1].total == 1, "à part, nommée (Virgile), avec son avancement")
+assert(#c.aFaire == 0, "personnelle : pas d'écart, pas de « Partager »")
+-- Léo, dont la classe est inconnue (rien n'est deviné) : une quête comme une autre, à partager.
+c = ns.calculer({
+  { nom = "Virgile", niveau = 12, race = 1, classe = 2, quetes = { [PALADIN] = { finie = false, partageable = true, objectifs = {} } } },
+  { nom = "Léo", niveau = 12, quetes = {} },
+}, 0, nil, BASE_PALADIN)
+assert(c.quetes[PALADIN] and #c.aFaire == 1 and c.aFaire[1].type == "partager", "classe de Léo inconnue : à partager")
+-- Deux paladins, un guerrier : personnelle aussi (le guerrier ne peut pas la prendre) ; chacun à part avec la sienne.
+c = ns.calculer({
+  { nom = "Virgile", niveau = 12, race = 1, classe = 2, quetes = { [PALADIN] = { finie = false, objectifs = {} } } },
+  { nom = "Léo", niveau = 12, race = 1, classe = 1, quetes = {} },
+  { nom = "Mira", niveau = 12, race = 3, classe = 2, quetes = { [PALADIN] = { finie = true, objectifs = {} } } },
+}, 0, nil, BASE_PALADIN)
+assert(#c.aPart == 2 and c.aPart[2].membre == "Mira" and c.aPart[2].aRendre and #c.aFaire == 0, "chacun la sienne, à part")
+-- Marquée personnelle à la main (sans Questie : la base ne dit rien de la quête) : personnelle, sans écart.
+c = ns.calculer({
+  { nom = "Virgile", niveau = 5, quetes = { [KOBOLDS] = { finie = false, partageable = true, personnelle = true, objectifs = {} } } },
+  { nom = "Léo", niveau = 5, quetes = {} },
+})
+assert(c.quetes[KOBOLDS] == nil and #c.aPart == 1 and c.aPart[1].personnelle and #c.aFaire == 0,
+  "marquée personnelle à la main : à part, pas d'écart")
+
+-- Niveau insuffisant (#7) : niveau requis 10 (base des quêtes), Léo niveau 9 → « au niveau 10 pour toute la Compagnie »
+-- chez qui l'a, pas de « Partager » ; résorbé quand Léo passe 10 (la quête redevient à partager).
+local BASE_DIX = { [KOBOLDS] = { niveau_requis = 10 } }
+local function dix(niveauLeo, base, appris)
+  return ns.calculer({ { nom = "Virgile", niveau = 10, quetes = { [KOBOLDS] = kobolds(true) } },
+    { nom = "Léo", niveau = niveauLeo, quetes = {} } }, 0, nil, base, nil, appris)
+end
+x = seul(dix(9, BASE_DIX).aFaire, "niveau", "Virgile", KOBOLDS)
+assert(x.niveau == 10, "au niveau 10")
+assert(dix(9, BASE_DIX).quetes[KOBOLDS], "toujours une quête de la Compagnie")
+seul(dix(10, BASE_DIX).aFaire, "partager", "Virgile", KOBOLDS)
+-- Non partageable ou pas dit (la quête d'un autre membre) : l'écart quand même, pour qui l'a.
+c = ns.calculer({ { nom = "Virgile", niveau = 9, quetes = {} }, { nom = "Léo", niveau = 12, quetes = { [KOBOLDS] = kobolds() } } },
+  0, nil, BASE_DIX)
+seul(c.aFaire, "niveau", "Léo", KOBOLDS)
+-- Sans base : le niveau appris quand un partage échoue (appris = { [id] = niveau requis }) fait le même écart.
+seul(dix(9, {}, { [KOBOLDS] = 10 }).aFaire, "niveau", "Virgile", KOBOLDS)
+seul(dix(9, {}).aFaire, "partager", "Virgile", KOBOLDS)
+assert(seul(dix(9, { [KOBOLDS] = { niveau_requis = 8 } }, { [KOBOLDS] = 10 }).aFaire, "niveau", "Virgile", KOBOLDS).niveau == 10,
+  "le plus haut des deux")
+
 -- Les zones du menu de la zone de la Compagnie (#24) : d'après la base des quêtes, une zone par areaID avec au moins 10
 -- quêtes ; son niveau d'entrée, le niveau requis du premier quart de ses quêtes ; les zones dont la Compagnie a le niveau
 -- d'entrée d'abord (de la plus haute à la plus basse), les autres ensuite (de la plus basse à la plus haute).
@@ -641,6 +696,16 @@ for _, mauvais in ipairs({ "", "x", "35", "35#", "35##", "35#1:0#", "35#1:0##", 
   assert(ns.decoder(mauvais) == nil, "rejeté : " .. mauvais:sub(1, 40))
   assert(ns.decoder(mauvais .. "#####" .. FIN) == nil, "rejeté avec le foyer et les quêtes d'avant : " .. mauvais:sub(1, 40))
 end
+-- Ma race et ma classe (#7 : la quête personnelle) partent avec mon niveau, « niveau:race:classe » ; une quête marquée
+-- personnelle à la main porte « p » après finie : encodage puis décodage → identique.
+local avecPerso = { niveau = 12, race = 95, classe = 2, quetes = { [PATTES] = { finie = true, personnelle = true, objectifs = {} },
+  [CHASSE] = { finie = false, objectifs = {} } }, rendues = {}, ecartees = {}, avant = {}, renduesAvant = {} }
+corps = ns.encoder(avecPerso)
+assert(corps:find("^12:95:2#1001:1p;1002:0#"), "race et classe, quête marquée : " .. corps)
+assert(pareil(ns.decoder(corps), avecPerso), "avec race, classe et quête personnelle : identique (" .. corps .. ")")
+for _, mauvais in ipairs({ "12:95#", "12:95:#", "12:x:2#", "12:95:2:1#", "12::2#", "12#1:p#", "12#1:2p#", "12#1:0pp#", "12#1:P#" }) do
+  assert(ns.decoder(mauvais .. "########" .. FIN) == nil, "rejeté : " .. mauvais)
+end
 -- Un état à cinq champs (celui de #5, sans foyer) est rejeté (#9) ; à huit (celui de #9, sans quêtes d'avant) aussi (#20).
 assert(ns.decoder("35#1:0####") == nil and ns.decoder("35#1:0######") == nil and ns.decoder("35#1:0########") == nil
   and ns.decoder("35#1:0#########") == nil and ns.decoder("35#1:0##########") == nil and ns.decoder("35#1:0########" .. FIN),
@@ -703,18 +768,19 @@ assert(ns.decoder(futur, 100000) == nil and ns.decoder("5####783:1:" .. (100000 
 
 -- Le pire cas réaliste tient dans MAX_MORCEAUX (10) : un journal plein (25 quêtes de 1 à 3 objectifs, 8 zones), 20
 -- décisions (dont 6 remises) signées de prénoms longs, 10 quêtes d'avant, 10 quêtes des autres rendues depuis l'entrée
--- et 10 avant, la zone de la Compagnie (#24), 8 prérequis manquants (#27), 5 membres (#23) ; l'id de la Compagnie est celui de
--- Compagnie.lua (GUID et heure serveur). Le texte des objectifs ne part pas.
+-- et 10 avant, la zone de la Compagnie (#24), 8 prérequis manquants (#27), 5 membres (#23), race et classe, toutes les
+-- quêtes marquées personnelles (#7) ; l'id de la Compagnie est celui de Compagnie.lua (GUID et heure serveur). Le texte
+-- des objectifs ne part pas.
 local ZONES = { "Contreforts de Hautebrande", "Marche de l'Ouest", "Forêt d'Elwynn", "Les Carmines", "Bois de la Pénombre",
   "Loch Modan", "Les Paluns", "Vallée de Strangleronce" }
 local OBJECTIFS = { { texte = "Raptor flagellant : 12/15 |4personnage tué:personnages tués;", fait = 12, total = 15 },
   { texte = "Croc de raptor : 9/10", fait = 9, total = 10 }, { texte = "Sauvetage de Kernobee", fait = 0, total = 1 } }
-local plein = { niveau = 60, quetes = {}, rendues = {}, renduesAvant = {}, avant = {}, ecartees = {}, auberge = "Comté-de-l'Or",
-  liaison = 1764000000, finRecharge = 1764003600 }
+local plein = { niveau = 60, race = 95, classe = 11, quetes = {}, rendues = {}, renduesAvant = {}, avant = {}, ecartees = {},
+  auberge = "Comté-de-l'Or", liaison = 1764000000, finRecharge = 1764003600 }
 for i = 1, 25 do
   local o = {}
   for k = 1, i % 3 + 1 do o[k] = OBJECTIFS[k] end
-  plein.quetes[90000 + i] = { finie = false, zone = ZONES[i % 8 + 1], objectifs = o }
+  plein.quetes[90000 + i] = { finie = false, zone = ZONES[i % 8 + 1], objectifs = o, personnelle = true } -- #7 : toutes marquées
 end
 for i = 1, 10 do plein.avant[90000 + i] = true; plein.rendues[91000 + i] = true; plein.renduesAvant[92000 + i] = true end
 for i = 1, 20 do plein.ecartees[93000 + i] = { ecartee = i % 3 > 0, date = 1764000000 + i, par = i % 2 == 0 and "Éléonorette" or "Virgile" } end
