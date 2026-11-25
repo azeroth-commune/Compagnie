@@ -130,3 +130,26 @@ function ns.ecarts(membres, foyer, communes, ecartees)
   end)
   return t
 end
+
+-- La suite d'une quête (#25) : ses suites dans la base des quêtes (base[id].suites : la suite de QuestieDB et les quêtes
+-- qui l'ont en prérequis), puis les leurs, de proche en proche, chacune une fois, dans l'ordre où on les rencontre.
+function ns.suite(base, id)
+  local file, vues, i = { id }, { [id] = true }, 1
+  while i <= #file do
+    for _, s in ipairs(base[file[i]] and base[file[i]].suites or {}) do
+      if not vues[s] then vues[s] = true; file[#file + 1] = s end
+    end
+    i = i + 1
+  end
+  table.remove(file, 1)
+  return file
+end
+
+-- Un personnage de cette race et de cette classe (raceID, classID du jeu) peut-il prendre la quête q de la base ? (races,
+-- classes : listes d'IDs, nil : toutes ; une quête absente de la base : oui, rien n'est deviné.)
+local function dans(liste, x)
+  if not liste then return true end
+  for _, y in ipairs(liste) do if y == x then return true end end
+  return false
+end
+function ns.peutPrendre(q, race, classe) return not q or dans(q.races, race) and dans(q.classes, classe) end

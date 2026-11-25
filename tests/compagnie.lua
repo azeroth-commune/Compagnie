@@ -1236,3 +1236,61 @@ test("acceptation automatique (#26) : la quête de Léo acceptée, pas une que p
     eteindre()
     if not ok then error(err, 0) end
 end)
+
+---------------------------------------------------------------------------------------------------
+-- Le bandeau d'abandon (#25) et la base des quêtes du socle (fausse, le temps d'un test).
+
+-- La base des quêtes vaut base le temps de f (AzerothCommune:Lire bouchonné pour ce type seul).
+local function avecBase(base, f)
+    local vrai = AzerothCommune.Lire
+    AzerothCommune.Lire = function(self, t, ...)
+        if t == "base des quêtes" then return base, { provenance = "source externe" } end
+        return vrai(self, t, ...)
+    end
+    local ok, err = pcall(f)
+    AzerothCommune.Lire = vrai
+    if not ok then error(err, 0) end
+end
+
+test("bandeau d'abandon (#25) : au-dessus de la fenêtre d'abandon, avec la suite coupée ; sans suite connue, sans elle ; hors Compagnie, rien ; le bouton du jeu intact", function()
+    local BASE = { [1001] = { nom = "Les pattes de loup", suites = { 1101 } }, [1101] = { nom = "La peau de loup", suites = { 1102 } },
+        [1102] = { nom = "Le chef des loups" }, [1003] = { nom = "Les Kobolds" } }
+    local function ouvrirAbandon(id, which)
+        C_QuestLog.SetSelectedQuest(id) -- comme le jeu : la quête choisie, SetAbandonQuest, puis la fenêtre
+        C_QuestLog.SetAbandonQuest()
+        StaticPopup_Show(which or "ABANDON_QUEST", BASE[id].nom, "des objets") -- le jeu passe le titre de la quête
+        return select(2, StaticPopup_Visible(which or "ABANDON_QUEST"))
+    end
+    avecBase(BASE, function()
+        avecGroupe({}, false, function()
+            avecJournal({ pattes(3), KOBOLDS }, function()
+                fabriquer({ guid = LEO, nom = "Léo Lame" })
+                CompagnieDB.etats = { [LEO] = { niveau = 5, rendues = {}, quetes = { [1001] = { finie = false, objectifs = {} } } } }
+                charger()
+                local f = assert(ouvrirAbandon(1001), "la fenêtre d'abandon du jeu")
+                local b = CompagnieBandeauAbandon
+                assertTrue(b and b:IsVisible(), "le bandeau s'affiche")
+                assertEquals("Abandonner « Les pattes de loup » l'écarte pour la Compagnie et coupe sa suite : La peau de loup, Le chef des loups.",
+                    CompagnieBandeauAbandonTexte:GetText())
+                assertTrue(b:GetBottom() >= f:GetTop(), "au-dessus de la fenêtre, hors d'elle")
+                assertTrue(f.button1:IsVisible() and f.button1:IsEnabled(), "le bouton du jeu : visible et actif")
+                StaticPopup_Hide("ABANDON_QUEST")
+                assertTrue(not b:IsVisible(), "fenêtre fermée : plus de bandeau")
+                f = ouvrirAbandon(1003, "ABANDON_QUEST_WITH_ITEMS")
+                assertTrue(b:IsVisible(), "avec des objets de quête aussi")
+                assertEquals("Abandonner « Les Kobolds » l'écarte pour la Compagnie.", CompagnieBandeauAbandonTexte:GetText(), "sans suite connue")
+                StaticPopup_Hide("ABANDON_QUEST_WITH_ITEMS")
+                -- Déjà écartée (« Abandonner aussi ») : l'abandon n'écarte rien de plus, pas de bandeau.
+                CompagnieDB.ecartees = { [1001] = { ecartee = true, date = 1, par = "Léo" } }
+                ouvrirAbandon(1001)
+                assertTrue(not b:IsVisible(), "déjà écartée : pas de bandeau")
+                StaticPopup_Hide("ABANDON_QUEST")
+                eteindre()
+                ouvrirAbandon(1001)
+                assertTrue(not b:IsVisible(), "hors Compagnie : pas de bandeau")
+                StaticPopup_Hide("ABANDON_QUEST")
+            end)
+        end)
+    end)
+    eteindre()
+end)

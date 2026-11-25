@@ -89,6 +89,9 @@ _Avoid_: mode groupe, mode synchro
 La liste des écarts qui demandent une action d'un membre (partager, aller voir un PNJ, se lier à l'auberge) ; visible même quand le mode Compagnie est éteint.
 _Avoid_: alertes, notifications
 
+**Bandeau d'abandon**:
+Un bandeau posé au-dessus de la fenêtre d'abandon du jeu quand abandonner écarterait la quête : « Abandonner « X » l'écarte pour la Compagnie », et la suite que l'abandon coupe, d'après la base des quêtes (sans les quêtes d'une autre race ou classe). Le bouton du jeu n'est jamais touché ; pas de bandeau hors d'une Compagnie, pour une quête déjà écartée ni pour ma quête d'avant.
+
 ### Plus tard
 
 **Chemin de synchronisation**:

@@ -275,6 +275,16 @@ c = ns.calculer({ { nom = "Virgile", niveau = 5, quetes = { [KOBOLDS] = kobolds(
   { nom = "Léo", niveau = 5, quetes = {}, renduesAvant = { [KOBOLDS] = true } } })
 assert(#c.aFaire == 0, "déjà faite par Léo avant l'entrée : rien à partager")
 
+-- La suite d'une quête (#25, le bandeau d'abandon) : ses suites, de proche en proche, chacune une fois (une boucle dans
+-- la base ne fait pas tourner en rond) ; une quête sans suite connue : rien.
+local BASE_SUITE = { [1001] = { suites = { 1002, 1004 } }, [1002] = { suites = { 1003 } }, [1003] = { suites = { 1001 } } }
+assert(table.concat(ns.suite(BASE_SUITE, 1001), ",") == "1002,1004,1003", "la suite : " .. table.concat(ns.suite(BASE_SUITE, 1001), ","))
+assert(#ns.suite(BASE_SUITE, 1004) == 0 and #ns.suite({}, 1001) == 0, "sans suite connue : rien")
+
+-- Peut-il la prendre ? (raceID, classID ; listes de la base, nil : toutes ; une quête inconnue de la base : oui.)
+assert(ns.peutPrendre({ races = { 1, 3 } }, 3, 1) and not ns.peutPrendre({ races = { 1, 3 } }, 4, 1), "race")
+assert(ns.peutPrendre({ classes = { 2 } }, 1, 2) and not ns.peutPrendre({ classes = { 2 } }, 1, 1) and ns.peutPrendre(nil, 1, 1), "classe")
+
 print("Compagnie : calcul de la Compagnie OK")
 
 -- Les membres (Membres.lua) : fonder, accepter, refuser, quitter, retirer, sans l'API du jeu, sous la même garde.

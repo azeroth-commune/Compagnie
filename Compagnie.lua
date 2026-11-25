@@ -326,7 +326,12 @@ local function calculer()
   local liste, presents, unites = membresDuJeu()
   return ns.calculer(liste, GetServerTime(), e.db.ecartees), presents, unites
 end
-local function titre(id) return titres[id] or C_QuestLog.GetTitleForQuestID(id) or ("Quête " .. id) end
+-- La base des quêtes du socle (souscrite au chargement) : { [id] = { nom, zone, suites, … } }, vide tant qu'elle manque.
+local function base() return (AC:Lire("base des quêtes")) or {} end
+local function titre(id)
+  local q = titres[id] or C_QuestLog.GetTitleForQuestID(id)
+  return q or (base()[id] or {}).nom or ("Quête " .. id)
+end
 
 -- Les quêtes écartées (#21) : « la Compagnie ne fait pas celle-là », décidé par n'importe quel membre (« Écarter », ou
 -- abandonner dans le jeu) ; « Remettre » l'annule. La décision, datée, part avec mon état ; la plus récente l'emporte
@@ -1025,6 +1030,12 @@ end
 -- celle-là »). Vu au clic du joueur (le jeu appelle C_QuestLog.SetAbandonQuest puis AbandonQuest), rien n'est deviné.
 -- Déjà écartée (« Abandonner aussi ») : rien de plus ; ma quête d'avant (#20), à moi seul : seulement oubliée.
 -- Accroché une fois, au chargement (ADDON_LOADED).
+-- abandonner(id) : « ecarter » (l'abandon l'écarte), « avant » (ma quête d'avant : seulement oubliée) ou nil (rien).
+local function effetAbandon(id)
+  if not (e.db.compagnie and type(id) == "number" and id > 0) or ecartee(id) then return end
+  if e.db.avant and e.db.avant[id] and not calculer().quetes[id] then return "avant" end
+  return "ecarter"
+end
 local aAbandonner, abandonsAccroches
 local function accrocherAbandons()
   if abandonsAccroches or not C_QuestLog.AbandonQuest then return end -- ponytail: le simulateur n'a pas ces fonctions
@@ -1033,16 +1044,56 @@ local function accrocherAbandons()
   hooksecurefunc(C_QuestLog, "AbandonQuest", function()
     local id = aAbandonner
     aAbandonner = nil
-    if not (e.db.compagnie and type(id) == "number" and id > 0) then return end
-    local d = e.db.ecartees and e.db.ecartees[id]
-    if d and d.ecartee then return end
-    if e.db.avant and e.db.avant[id] and not calculer().quetes[id] then
+    local effet = effetAbandon(id)
+    if effet == "avant" then
       e.db.avant[id] = nil
       return redessinerBientot()
     end
-    decider(id, true)
+    if effet then decider(id, true) end
   end)
 end
+
+-- Le bandeau d'abandon (#25) : au-dessus de la fenêtre d'abandon du jeu (ABANDON_QUEST, avec ou sans objets de quête),
+-- quand l'abandon écarterait la quête : « Abandonner « X » l'écarte pour la Compagnie », et la suite que la base des
+-- quêtes connaît (« et coupe sa suite : Y, Z »). Accroché à l'affichage de la fenêtre (StaticPopup_Show), posé dessus
+-- (enfant : caché avec elle) et hors d'elle : la fenêtre du jeu et ses boutons ne sont jamais touchés.
+local function bandeauAbandon(which, nom)
+  local b = CompagnieBandeauAbandon
+  local _, fenetre = StaticPopup_Visible(which)
+  if which ~= "ABANDON_QUEST" and which ~= "ABANDON_QUEST_WITH_ITEMS" then
+    if b and fenetre and b:GetParent() == fenetre then b:Hide() end -- la même fenêtre resservie pour autre chose
+    return
+  end
+  local id = C_QuestLog.GetAbandonQuest and C_QuestLog.GetAbandonQuest()
+  if not (fenetre and effetAbandon(id) == "ecarter") then if b then b:Hide() end return end
+  if not b then
+    b = CreateFrame("Frame", "CompagnieBandeauAbandon", fenetre, "BackdropTemplate")
+    b:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
+    b:SetBackdropColor(0.25, 0.05, 0.05, 0.95)
+    b:SetBackdropBorderColor(1, 0.3, 0.2, 0.8)
+    b.texte = b:CreateFontString("CompagnieBandeauAbandonTexte", "OVERLAY", "GameFontNormal")
+    b.texte:SetPoint("TOPLEFT", 10, -8)
+    b.texte:SetJustifyH("LEFT")
+  end
+  b:SetParent(fenetre)
+  b:ClearAllPoints()
+  b:SetPoint("BOTTOMLEFT", fenetre, "TOPLEFT", 0, 4)
+  b:SetPoint("BOTTOMRIGHT", fenetre, "TOPRIGHT", 0, 4)
+  local q, noms, race, classe = base(), {}, select(3, UnitRace("player")), select(3, UnitClass("player"))
+  for _, s in ipairs(ns.suite(q, id)) do
+    if ns.peutPrendre(q[s], race, classe) then -- pas les lettres des autres classes
+      if #noms == 3 then noms[4] = "…" break end
+      noms[#noms + 1] = (q[s] or {}).nom or titre(s)
+    end
+  end
+  b.texte:SetWidth(fenetre:GetWidth() - 20)
+  local texte = ("Abandonner « %s » l'écarte pour la Compagnie%s."):format(type(nom) == "string" and nom or titre(id),
+    #noms > 0 and " et coupe sa suite : " .. table.concat(noms, ", ") or "")
+  b.texte:SetText((texte:gsub("…%.$", "…")))
+  b:SetHeight(b.texte:GetStringHeight() + 16)
+  b:Show()
+end
+hooksecurefunc("StaticPopup_Show", bandeauAbandon)
 
 ---------------------------------------------------------------------------------------------------
 -- Messages d'add-on. Au groupe du jeu : d'un expéditeur que le serveur y nomme (son GUID vient du groupe) ; en
@@ -1061,6 +1112,7 @@ cadre:SetScript("OnEvent", function(_, ev, a1, texte, canal, expediteur)
       e.db, e.moi = CompagnieDB, moi()
       connectes, chuchotes = {}, {} -- la présence repart de zéro (en jeu, un /reload efface tout l'état Lua)
       accrocherAbandons()
+      AC:Souscrire("base des quêtes") -- la suite d'une quête (#25), les zones et les prérequis (#24, #27)
       -- Pas de fenêtre ici : à ADDON_LOADED, les add-ons chargés après nous (Diagnostic, qui donne sa loupe aux
       -- fenêtres du socle) ne le sont pas encore. PLAYER_ENTERING_WORLD applique le mode.
       if not veille then veille = true; C_Timer.After(VEILLE, veiller) end
