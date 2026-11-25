@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400">
+<rect width="400" height="400" fill="#24150e"/><circle cx="200" cy="200" r="175" fill="#2f1d12"/>
+<circle cx="200" cy="195" r="112" fill="none" stroke="#6a9a3c" stroke-width="8"/>
+<g transform="translate(265.8,104.4)"><circle cy="-22" r="19" fill="#f2e0b0"/><path d="M-30 30 q0 -36 30 -36 q30 0 30 36z" fill="#f2e0b0"/></g><g transform="translate(306.5,229.6)"><circle cy="-22" r="19" fill="#f2e0b0"/><path d="M-30 30 q0 -36 30 -36 q30 0 30 36z" fill="#f2e0b0"/></g><g transform="translate(200.0,307.0)"><circle cy="-22" r="19" fill="#f2e0b0"/><path d="M-30 30 q0 -36 30 -36 q30 0 30 36z" fill="#f2e0b0"/></g><g transform="translate(93.5,229.6)"><circle cy="-22" r="19" fill="#f2e0b0"/><path d="M-30 30 q0 -36 30 -36 q30 0 30 36z" fill="#f2e0b0"/></g><g transform="translate(134.2,104.4)"><circle cy="-22" r="19" fill="#f2e0b0"/><path d="M-30 30 q0 -36 30 -36 q30 0 30 36z" fill="#f2e0b0"/></g>
+<circle cx="200" cy="195" r="34" fill="#e3b95a"/>
+<path d="M184 195 l11 11 l22 -24" fill="none" stroke="#24150e" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
