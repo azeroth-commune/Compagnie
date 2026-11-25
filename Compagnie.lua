@@ -3,8 +3,8 @@
 -- le jeu donne et ce qu'il affiche.
 -- Présent : un membre connecté dans mon groupe du jeu (donné par le serveur : GUID, UnitIsConnected), ou hors du groupe
 -- un membre qui nous a écrit par chuchotement depuis moins de 2 min ; sinon absent. Rien n'est deviné.
--- Messages des membres (fonder, quitter, retirer) : au groupe du jeu seulement, donc ils n'atteignent que les présents.
--- ponytail: un absent ne l'apprend pas à son retour ; l'état pourra porter la liste des membres.
+-- Messages des membres (fonder, inviter, quitter, retirer) : au groupe du jeu seulement, donc ils n'atteignent que les
+-- présents ; la liste des membres part aussi avec l'état (#23) : un absent apprend la plus récente à son retour.
 -- États (Etats.lua) : au groupe du jeu quand un membre y est, en chuchotement d'add-on aux membres connectés hors du
 -- groupe. Connecté : il nous a écrit par chuchotement. À la connexion, une demande d'état est chuchotée une fois à chaque
 -- membre hors du groupe, puis à chaque membre hors du groupe resté muet une minute (toutes les 30 s au plus) ; pour un
@@ -44,7 +44,10 @@ local jeu = {
     if IsInGroup() then C_ChatInfo.SendAddonMessage(PREFIXE, texte, IsInRaid() and "RAID" or "PARTY") end
   end,
   dire = function(texte) print("|cffa78ffcCompagnie :|r " .. texte) end,
-  proposer = function(p) StaticPopup_Show(p.deja and "COMPAGNIE_DEJA" or "COMPAGNIE_PROPOSITION", p.nom) end,
+  proposer = function(p)
+    StaticPopup_Show(p.deja and "COMPAGNIE_DEJA" or p.invitation and "COMPAGNIE_INVITATION" or "COMPAGNIE_PROPOSITION", p.nom)
+  end,
+  heure = function() return math.floor(GetServerTime()) end, -- la date de la liste des membres (#23)
   maj = function() ns.majCompagnie() end, -- la Compagnie a changé (fondée, quittée, un membre retiré)
   -- J'entre dans la Compagnie (#20) : ce qui est dans mon journal devient mes quêtes d'avant ; seules les remises vues
   -- à partir d'ici comptent pour une quête en avance (CompagnieDB.renduesVues, noté à QUEST_TURNED_IN).
@@ -61,15 +64,19 @@ StaticPopupDialogs.COMPAGNIE_PROPOSITION = {
   OnAccept = function()
     local id = e.proposition and e.proposition.id
     ns.repondre(e, true, jeu)
-    -- le fondateur clôt au plus tard DELAI + 5 s après sa proposition : passé ce temps, plus de F à attendre
+    -- le fondateur clôt au plus tard DELAI + 5 s après sa proposition (l'invitation : l'état de qui invite part 3 s
+    -- après l'acceptation) : passé ce temps, plus rien à attendre
     if id then C_Timer.After(DELAI + 10, function() ns.expirer(e, id, jeu) end) end
   end,
   OnCancel = function() ns.repondre(e, false, jeu) end, -- aussi au bout du délai
   timeout = DELAI, whileDead = true, hideOnEscape = true,
   noCancelOnReuse = true, -- une 2e proposition remplace la 1re : pas de refus envoyé pour la nouvelle
 }
+StaticPopupDialogs.COMPAGNIE_INVITATION = {} -- inviter (#23) : la même réponse que la fondation
+for k, v in pairs(StaticPopupDialogs.COMPAGNIE_PROPOSITION) do StaticPopupDialogs.COMPAGNIE_INVITATION[k] = v end
+StaticPopupDialogs.COMPAGNIE_INVITATION.text = "%s t'invite dans sa Compagnie : vous ferez l'aventure ensemble. En être membre ?"
 StaticPopupDialogs.COMPAGNIE_DEJA = {
-  text = "%s te propose de fonder une Compagnie, mais tu es déjà membre d'une Compagnie : quitte-la pour en rejoindre une autre. Ta réponse est partie : non.",
+  text = "%s te propose une Compagnie, mais tu es déjà membre d'une Compagnie : quitte-la pour en rejoindre une autre. Ta réponse est partie : non.",
   button1 = OKAY or "OK", timeout = DELAI, whileDead = true, hideOnEscape = true,
 }
 
@@ -125,6 +132,16 @@ end
 
 local function entier(v, max) return math.min(max, math.max(0, math.floor(tonumber(v) or 0))) end
 
+-- Mes prérequis manquants pour la zone de la Compagnie (#27), calculés en direct (rendue : IsQuestFlaggedCompleted ; ma
+-- race et ma classe) : choisir la zone du rendez-vous montre tout de suite ce qu'il faut faire avant de partir.
+local function mesPrerequis()
+  local zc = e.db.zoneCompagnie
+  if not zc then return nil end
+  local q = (AC:Lire("base des quêtes")) or {}
+  return { zone = zc.zone, manquants = ns.prerequisManquants(zc.zone, q, C_QuestLog.IsQuestFlaggedCompleted,
+    select(3, UnitRace("player")), select(3, UnitClass("player")), ns.ecarteesEffectives(e.db.ecartees, q)) }
+end
+
 -- La zone d'une quête (#13) : l'en-tête sous lequel le journal la range (en Classic, un nom de zone ; à vérifier en jeu
 -- contre GetRealZoneText).
 function monEtat()
@@ -171,6 +188,9 @@ function monEtat()
   local reste = (debut or 0) > 0 and (recharge or 0) > 1.5 and debut + recharge - GetTime() or 0 -- 1.5 s : temps global
   return { niveau = UnitLevel("player"), quetes = quetes, rendues = rendues, renduesAvant = renduesAvant, avant = avant,
     ecartees = e.db.ecartees, -- les décisions de la Compagnie (#21), telles que je les connais
+    zoneCompagnie = e.db.zoneCompagnie, -- la zone de la Compagnie (#24), telle que je la connais
+    prerequis = mesPrerequis(), -- mes prérequis manquants pour cette zone (#27)
+    liste = e.db.compagnie and { date = e.db.compagnie.date or 0, membres = e.db.compagnie.membres }, -- #23
     auberge = auberge ~= "" and auberge or nil, liaison = f and f.auberge == auberge and f.date or nil,
     finRecharge = reste > 0 and math.ceil((GetServerTime() + reste) / 60) * 60 or nil }
 end
@@ -217,7 +237,7 @@ local function diffuser(texte, tous)
   return ok
 end
 
-local redessiner, annoncer -- plus bas
+local redessiner, annoncer, annoncerZone, changerListe -- plus bas
 local envoi = {
   programmer = function(delai, fn) C_Timer.After(delai, fn) end,
   monEtat = monEtat,
@@ -231,6 +251,8 @@ local reception = {
   -- Un état reçu : mes rendues suivent les quêtes des autres, mon état repart s'il a changé.
   maj = function() redessiner(); ns.signaler(e, false, envoi) end,
   annoncer = function(changees) annoncer(changees) end,
+  zone = function(z) annoncerZone(z) end,
+  liste = function(l) changerListe(l) end,
   demande = function() ns.signaler(e, true, envoi) end,
   maintenant = GetTime,
   heure = GetServerTime,
@@ -268,6 +290,13 @@ local function prenom(guid)
   return i and c.membres[i].nom:match("^(%S+)") or "?"
 end
 
+-- Des membres (GUID), nommés par leur prénom ; moi : « toi ».
+local function noms(guids)
+  local t = {}
+  for i, g in ipairs(guids) do t[i] = g == moi() and "toi" or prenom(g) end
+  return table.concat(t, ", ")
+end
+
 local function ligneObjectif(i, o)
   local compte = o.fait .. "/" .. o.total
   local t = o.texte
@@ -302,8 +331,8 @@ local function choixDeZone()
   return choix
 end
 
--- Le calcul de la Compagnie depuis mon journal et les derniers états connus (corrigés par le jeu pour mon groupe).
-local function calculer()
+-- Les membres du calcul : mon journal et les derniers états connus, corrigés par le jeu pour mon groupe.
+local function membresDuJeu()
   local presents, unites = presence()
   local liste = ns.membresDuCalcul(e.db, moi(), monEtat(), presents)
   local ids = {}
@@ -319,9 +348,20 @@ local function calculer()
       end)
     end
   end
-  return ns.calculer(liste, GetServerTime(), e.db.ecartees), presents, unites
+  return liste, presents, unites
 end
-local function titre(id) return titres[id] or C_QuestLog.GetTitleForQuestID(id) or ("Quête " .. id) end
+-- La base des quêtes du socle (souscrite au chargement) : { [id] = { nom, zone, suites, … } }, vide tant qu'elle manque.
+local function base() return (AC:Lire("base des quêtes")) or {} end
+-- Le calcul de la Compagnie.
+local function calculer()
+  local liste, presents, unites = membresDuJeu()
+  local zc = e.db.zoneCompagnie
+  return ns.calculer(liste, GetServerTime(), e.db.ecartees, base(), zc and zc.zone), presents, unites
+end
+local function titre(id)
+  local q = titres[id] or C_QuestLog.GetTitleForQuestID(id)
+  return q or (base()[id] or {}).nom or ("Quête " .. id)
+end
 
 -- Les quêtes écartées (#21) : « la Compagnie ne fait pas celle-là », décidé par n'importe quel membre (« Écarter », ou
 -- abandonner dans le jeu) ; « Remettre » l'annule. La décision, datée, part avec mon état ; la plus récente l'emporte
@@ -338,6 +378,51 @@ local function decider(id, ecartee)
 end
 function annoncer(changees)
   for _, d in ipairs(changees) do jeu.dire(phrase(d.par .. " a", d, d.quete)) end
+end
+
+-- La zone de la Compagnie (#24) : choisie par n'importe quel membre dans le menu de son bouton, en tête du suivi (les
+-- zones de la base des quêtes, celles dont la Compagnie a le niveau d'entrée d'abord, les autres en grisé, choisissables).
+-- Le choix, daté, part avec mon état ; le plus récent l'emporte (Etats.lua) et le chat le dit. Entrer dans une autre zone
+-- de la base : une ligne dans le chat propose « /compagnie zone », une fois par zone et par session ; rien ne change seul.
+-- Indépendante du filtre d'affichage par zone (#13), qui reste personnel.
+local function nomZone(z) return C_Map.GetAreaInfo(z) or ("Zone " .. z) end
+local function choisirZone(z)
+  e.db.zoneCompagnie = { zone = z, date = math.floor(GetServerTime()), par = prenom(moi()) }
+  jeu.dire(("Tu as choisi %s pour la Compagnie."):format(nomZone(z)))
+  ns.signaler(e, false, envoi)
+  redessiner()
+end
+function annoncerZone(z) jeu.dire(("%s a choisi %s pour la Compagnie."):format(z.par, nomZone(z.zone))) end
+local function zoneDe(nom) -- l'areaID d'une zone de la base, d'après son nom (GetRealZoneText), ou nil
+  for _, z in ipairs(ns.zones(base(), 1)) do if nomZone(z.zone) == nom then return z.zone end end
+end
+local function choisirZoneEnCours()
+  local z = e.db.compagnie and zoneDe(zoneEnCours())
+  if not e.db.compagnie then return jeu.dire("Pas de Compagnie : fonde-la d'abord.") end
+  if not z then return jeu.dire("Cette zone n'est pas dans la base des quêtes : choisis la zone dans le suivi.") end
+  choisirZone(z)
+end
+local suggerees = {} -- [nom de zone] = true : proposée pendant cette session
+local function suggererZone()
+  local ici, zc = zoneEnCours(), e.db.zoneCompagnie
+  if not (e.db.compagnie and ici) or suggerees[ici] then return end
+  local z = zoneDe(ici)
+  if not z or zc and zc.zone == z then return end
+  suggerees[ici] = true
+  jeu.dire(("Tu entres en %s, qui n'est pas la zone de la Compagnie%s : « /compagnie zone » la choisit."):format(ici,
+    zc and " (" .. nomZone(zc.zone) .. ")" or ""))
+end
+local function menuZone(owner)
+  local niveau, actuelle = calculer().niveau, e.db.zoneCompagnie and e.db.zoneCompagnie.zone
+  MenuUtil.CreateContextMenu(owner, function(_, root)
+    root:CreateTitle("Zone de la Compagnie")
+    if root.SetScrollMode then root:SetScrollMode(400) end
+    for _, z in ipairs(ns.zones(base(), niveau)) do
+      local texte = ("%s (niv. %d)"):format(nomZone(z.zone), z.niveau)
+      root:CreateRadio(z.ouverte and texte or "|cff808080" .. texte .. "|r", function() return actuelle == z.zone end,
+        function() choisirZone(z.zone) end)
+    end
+  end)
 end
 StaticPopupDialogs.COMPAGNIE_ECARTER = {
   text = "Écarter « %s » ? La Compagnie ne la fera pas : elle sort du suivi de tous. « Remettre » dans la fenêtre de la " ..
@@ -357,10 +442,39 @@ local function menuEcarter(owner, id)
     root:CreateButton("Écarter pour la Compagnie", function() proposerEcart(id) end)
   end)
 end
-local function bulleEcarter(owner)
+local function bulleEcarter(owner, details) -- details : ce que dit la ligne en entier (prérequis manquant, #27)
   GameTooltip:SetOwner(owner, "ANCHOR_LEFT")
-  GameTooltip:SetText("Clic droit : écarter pour la Compagnie", 1, 1, 1, true)
+  if details then
+    GameTooltip:SetText(details, 1, 1, 1, true)
+    GameTooltip:AddLine("Clic droit : écarter pour la Compagnie", 0.6, 0.6, 0.6, true)
+  else GameTooltip:SetText("Clic droit : écarter pour la Compagnie", 1, 1, 1, true) end
   GameTooltip:Show()
+end
+-- Écartée pour de bon : par une décision, ou emportée avec la chaîne d'une quête écartée (#27).
+local function ecartees() return ns.ecarteesEffectives(e.db.ecartees, base()) end
+local function ecartee(id) return ecartees()[id] ~= nil end
+
+-- L'acceptation automatique (#26) : à l'ouverture de la fenêtre d'une quête (QUEST_DETAIL : partage ou PNJ), acceptée si
+-- un autre membre l'a dans son journal (dernier état connu, corrigé par le jeu pour mon groupe : un partage arrive avant
+-- l'état de qui partage) et qu'elle n'est pas écartée ; une confirmation d'escorte (QUEST_ACCEPT_CONFIRM : qui l'a
+-- lancée, titre), confirmée si un membre l'a lancée. Réglage CompagnieDB.accepteAuto, allumé par défaut (nil).
+local function accepteAuto() return e.db.compagnie and e.db.accepteAuto ~= false end
+local function accepterQuete()
+  local id = GetQuestID()
+  if not (accepteAuto() and type(id) == "number" and id > 0) or ecartee(id) then return end
+  for _, m in ipairs((membresDuJeu())) do
+    if m.nom ~= moi() and m.quetes and m.quetes[id] then return AcceptQuest() end
+  end
+end
+local function confirmerEscorte(qui, titreEscorte)
+  if not accepteAuto() then return end
+  for id in pairs(ecartees()) do if titre(id) == titreEscorte then return end end
+  for _, m in ipairs(e.db.compagnie.membres) do
+    if m.guid ~= moi() and (m.nom == qui or m.nom:match("^(%S+)") == qui) then
+      ConfirmAcceptQuest()
+      return StaticPopup_Hide("QUEST_ACCEPT") -- la fenêtre du jeu, montrée juste avant (Blizzard écoute avant nous)
+    end
+  end
 end
 
 -- Les blocs du suivi, un par quête (titre, objectifs, état) : { texte, quete = id d'une quête de la Compagnie (le clic
@@ -478,13 +592,13 @@ local function remplirAFaire(l, ecarts, unites)
       b:GetFontString():SetPoint("RIGHT", -8, 0)
       -- Un bouton inactif n'a ni OnClick ni (par défaut) OnEnter, mais reçoit OnMouseUp : le clic droit passe par là.
       b:SetMotionScriptsWhileDisabled(true)
-      b:SetScript("OnEnter", function(self) if self.ecartable then bulleEcarter(self) end end)
+      b:SetScript("OnEnter", function(self) if self.ecartable then bulleEcarter(self, self.details) end end)
       b:SetScript("OnLeave", function() GameTooltip:Hide() end)
       b:HookScript("OnMouseUp", function(self, bouton)
         if bouton == "RightButton" and self.ecartable then menuEcarter(self, self.ecartable) end
       end)
       b:SetScript("OnClick", function(self)
-        if self.x.type == "avance" or self.x.type == "foyer" then return end
+        if self.x.type == "avance" or self.x.type == "foyer" or self.x.type == "prerequis" then return end
         if self.x.type == "ecartee" then
           local p = StaticPopup_Show("COMPAGNIE_ABANDON", titre(self.x.quete))
           if p then p.data = self.x.quete end
@@ -498,8 +612,17 @@ local function remplirAFaire(l, ecarts, unites)
       end)
       l.boutons[i] = b
     end
-    b.x, b.ecartable = x, x.type == "avance" and x.quete or nil
-    if x.type == "ecartee" then
+    b.x, b.ecartable, b.details = x, (x.type == "avance" or x.type == "prerequis") and x.quete or nil, nil
+    if x.type == "prerequis" then
+      local n = #x.chaine
+      local quetes = n == 1 and "1 quête" or n .. " quêtes"
+      b:SetText(("Avant %s : %s à %s"):format(titre(x.quete), quetes, nomZone(x.zone)))
+      b.details = ("« %s » demande avant %s à %s, à commencer par « %s »%s. Manque à %s.%s"):format(titre(x.quete), quetes,
+        nomZone(x.zone), titre(x.chaine[1]), x.donneur and x.donneur.nom and " (" .. x.donneur.nom .. ")" or "",
+        x.tous and "toute la Compagnie" or noms(x.manquants),
+        #x.aControler > 0 and " À contrôler : " .. noms(x.aControler) .. " (son état ne couvre pas cette zone)." or "")
+      b:Disable()
+    elseif x.type == "ecartee" then
       b:SetText("Abandonner aussi : " .. titre(x.quete))
       b:Enable()
     elseif x.type == "avance" then
@@ -544,7 +667,7 @@ local function placerPierre()
   b:SetShown(f:IsShown())
   if not f:IsShown() then return end
   b:ClearAllPoints()
-  b:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", f:GetLeft() + 14, f:GetTop() - 40)
+  b:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", f:GetLeft() + 14, f:GetTop() - 66)
 end
 local function duree(s)
   local m = math.ceil(s / 60)
@@ -594,10 +717,13 @@ local function dessinerSuivi(calc, presents, unites)
   if not calc then calc, presents, unites = calculer() end
   local hAFaire = remplirAFaire(CompagnieSuiviAFaire, mesEcarts(calc), unites)
   local h = placerLignes(blocsSuivi(calc, presents))
+  local zc = e.db.zoneCompagnie
+  CompagnieZoneBouton:SetText(not zc and "Choisir la zone de la Compagnie" or "Zone : " .. nomZone(zc.zone) ..
+    (#calc.aControler > 0 and " (" .. noms(calc.aControler) .. " à contrôler)" or ""))
   CompagnieSuiviZone:SetText(libelleZone())
   CompagnieSuiviZone:SetWidth(CompagnieSuiviZone:GetFontString():GetStringWidth() + 22)
   CompagnieSuiviContenu:SetHeight(math.max(1, h))
-  f:SetHeight(math.min(134 + hAFaire + h, UIParent:GetHeight() * 0.6))
+  f:SetHeight(math.min(160 + hAFaire + h, UIParent:GetHeight() * 0.6))
   placerPierre()
   if CompagniePierre then CompagniePierre:SetText(calc.pierre > 0 and "Foyer dans " .. duree(calc.pierre) or "Rentrer au foyer") end
 end
@@ -683,8 +809,13 @@ local function ouvrirSuivi()
     f:ClearAllPoints()
     f:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", -40, -260) -- sous la minicarte
     f:SetFrameStrata("LOW")
-    titreDePartie(f, "À faire", -70) -- au-dessus : la pierre de la Compagnie (placerPierre)
-    local aFaire = listeAFaire(f, "CompagnieSuiviAFaire", -90)
+    -- En tête : la zone de la Compagnie (#24), son bouton ouvre le menu des zones ; dessous, la pierre (placerPierre).
+    local zc = CreateFrame("Button", "CompagnieZoneBouton", f, "UIPanelButtonTemplate")
+    zc:SetSize(262, 22)
+    zc:SetPoint("TOPLEFT", 14, -40)
+    zc:SetScript("OnClick", menuZone)
+    titreDePartie(f, "À faire", -96)
+    local aFaire = listeAFaire(f, "CompagnieSuiviAFaire", -116)
     -- Le filtre par zone : le titre de la partie Quêtes est la zone affichée ; un clic ouvre juste dessous la liste des
     -- zones de la Compagnie (avec leur nombre de quêtes), un clic en choisit une et la liste se ferme.
     local z = CreateFrame("Button", "CompagnieSuiviZone", f)
@@ -849,12 +980,32 @@ end
 -- La fenêtre, en deux onglets : Membres (présent ou absent, « Retirer » sur les autres ; « Fonder » ou « Quitter ») et
 -- Écartées (#21 : les quêtes écartées, qui l'a décidé, « Remettre ») ; le mode Compagnie, son état sur son bouton.
 local tableau, vide, boutonFonder, boutonQuitter, boutonMode, tableauEcartees, videEcartees, panneaux
+-- Inviter (#23) : la proposition part au groupe du jeu ; sans réponse au bout du délai, l'invitation tombe.
+local function inviter(guid)
+  local g = groupe()
+  local ok, raison = ns.inviter(e, moi(), g, guid, jeu)
+  if not ok then return jeu.dire(raison) end
+  local nom = g[ns.membre({ membres = g }, guid)].nom
+  jeu.dire("Invitation envoyée à " .. nom .. " : il a une minute pour répondre.")
+  C_Timer.After(DELAI + 5, function()
+    if e.invitations and e.invitations[guid] then
+      e.invitations[guid] = nil
+      jeu.dire(nom .. " n'a pas répondu à l'invitation.")
+      redessiner()
+    end
+  end)
+  redessiner()
+end
 local COLONNES = {
   { key = "nom", title = "Membre", w = 180, get = function(m) return m.nom end },
   { key = "presence", title = "Présence", w = 80, get = function(m) return m.presence end,
     fmt = function(v) return (v == "présent" and "|cff59cc73" or "|cff999999") .. v .. "|r" end },
-  { key = "retirer", w = 80, button = function(m) if m.guid ~= moi() then return "Retirer" end end,
-    click = function(m) ns.retirer(e, moi(), m.guid, jeu) end },
+  -- Retirer un membre ; Inviter un joueur du groupe qui n'est pas membre (#23), « Invité… » en attendant sa réponse.
+  { key = "retirer", w = 80, button = function(m)
+      if m.invitable then return e.invitations and e.invitations[m.guid] and "Invité…" or "Inviter" end
+      if m.guid ~= moi() then return "Retirer" end
+    end,
+    click = function(m) if m.invitable then inviter(m.guid) else ns.retirer(e, moi(), m.guid, jeu) end end },
 }
 local COLONNES_ECARTEES = {
   { key = "titre", title = "Quête écartée", w = 180, get = function(l) return l.titre end },
@@ -867,6 +1018,9 @@ function dessiner()
   presents[moi()] = true
   for i, m in ipairs(c and c.membres or {}) do
     lignes[i] = { guid = m.guid, nom = m.nom, presence = presents[m.guid] and "présent" or "absent" }
+  end
+  for _, p in ipairs(c and #c.membres < ns.MAX and groupe() or {}) do -- les joueurs du groupe à inviter (#23)
+    if not ns.membre(c, p.guid) then lignes[#lignes + 1] = { guid = p.guid, nom = p.nom, presence = "dans le groupe", invitable = true } end
   end
   tableau:SetData(lignes)
   vide:SetShown(not c)
@@ -953,10 +1107,26 @@ local function redessinerBientot()
   C_Timer.After(0.5, function() dessinPrevu = false; redessiner() end)
 end
 
+-- La liste des membres a changé par l'état d'un membre (#23, Etats.lua) : j'entre (invité), je n'y suis plus, ou
+-- d'autres sont entrés ou partis.
+function changerListe(l)
+  if l.entre then
+    jeu.entrer()
+    local t = {}
+    for i, m in ipairs(e.db.compagnie.membres) do t[i] = m.nom end
+    jeu.dire("Tu entres dans la Compagnie : " .. table.concat(t, ", ") .. ".")
+  elseif l.sorti then jeu.dire("Tu n'es plus membre de la Compagnie.")
+  else
+    for _, nom in ipairs(l.ajoutes) do jeu.dire(nom .. " est entré dans la Compagnie.") end
+    for _, nom in ipairs(l.retires) do jeu.dire(nom .. " n'est plus dans la Compagnie.") end
+  end
+  ns.majCompagnie()
+end
+
 -- La Compagnie a changé : le mode suit, et mon état part (forcé : de nouveaux membres ne l'ont pas).
 function ns.majCompagnie()
   if not e.db.compagnie then -- plus de Compagnie : derniers états, écartées, quêtes d'avant et remises vues oubliés
-    e.db.etats, e.db.ecartees, e.db.avant, e.db.renduesVues = nil, nil, nil, nil
+    e.db.etats, e.db.ecartees, e.db.avant, e.db.renduesVues, e.db.zoneCompagnie = nil, nil, nil, nil, nil
   end
   appliquerMode()
   redessiner()
@@ -996,6 +1166,12 @@ end
 -- celle-là »). Vu au clic du joueur (le jeu appelle C_QuestLog.SetAbandonQuest puis AbandonQuest), rien n'est deviné.
 -- Déjà écartée (« Abandonner aussi ») : rien de plus ; ma quête d'avant (#20), à moi seul : seulement oubliée.
 -- Accroché une fois, au chargement (ADDON_LOADED).
+-- abandonner(id) : « ecarter » (l'abandon l'écarte), « avant » (ma quête d'avant : seulement oubliée) ou nil (rien).
+local function effetAbandon(id)
+  if not (e.db.compagnie and type(id) == "number" and id > 0) or ecartee(id) then return end
+  if e.db.avant and e.db.avant[id] and not calculer().quetes[id] then return "avant" end
+  return "ecarter"
+end
 local aAbandonner, abandonsAccroches
 local function accrocherAbandons()
   if abandonsAccroches or not C_QuestLog.AbandonQuest then return end -- ponytail: le simulateur n'a pas ces fonctions
@@ -1004,16 +1180,56 @@ local function accrocherAbandons()
   hooksecurefunc(C_QuestLog, "AbandonQuest", function()
     local id = aAbandonner
     aAbandonner = nil
-    if not (e.db.compagnie and type(id) == "number" and id > 0) then return end
-    local d = e.db.ecartees and e.db.ecartees[id]
-    if d and d.ecartee then return end
-    if e.db.avant and e.db.avant[id] and not calculer().quetes[id] then
+    local effet = effetAbandon(id)
+    if effet == "avant" then
       e.db.avant[id] = nil
       return redessinerBientot()
     end
-    decider(id, true)
+    if effet then decider(id, true) end
   end)
 end
+
+-- Le bandeau d'abandon (#25) : au-dessus de la fenêtre d'abandon du jeu (ABANDON_QUEST, avec ou sans objets de quête),
+-- quand l'abandon écarterait la quête : « Abandonner « X » l'écarte pour la Compagnie », et la suite que la base des
+-- quêtes connaît (« et coupe sa suite : Y, Z »). Accroché à l'affichage de la fenêtre (StaticPopup_Show), posé dessus
+-- (enfant : caché avec elle) et hors d'elle : la fenêtre du jeu et ses boutons ne sont jamais touchés.
+local function bandeauAbandon(which, nom)
+  local b = CompagnieBandeauAbandon
+  local _, fenetre = StaticPopup_Visible(which)
+  if which ~= "ABANDON_QUEST" and which ~= "ABANDON_QUEST_WITH_ITEMS" then
+    if b and fenetre and b:GetParent() == fenetre then b:Hide() end -- la même fenêtre resservie pour autre chose
+    return
+  end
+  local id = C_QuestLog.GetAbandonQuest and C_QuestLog.GetAbandonQuest()
+  if not (fenetre and effetAbandon(id) == "ecarter") then if b then b:Hide() end return end
+  if not b then
+    b = CreateFrame("Frame", "CompagnieBandeauAbandon", fenetre, "BackdropTemplate")
+    b:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
+    b:SetBackdropColor(0.25, 0.05, 0.05, 0.95)
+    b:SetBackdropBorderColor(1, 0.3, 0.2, 0.8)
+    b.texte = b:CreateFontString("CompagnieBandeauAbandonTexte", "OVERLAY", "GameFontNormal")
+    b.texte:SetPoint("TOPLEFT", 10, -8)
+    b.texte:SetJustifyH("LEFT")
+  end
+  b:SetParent(fenetre)
+  b:ClearAllPoints()
+  b:SetPoint("BOTTOMLEFT", fenetre, "TOPLEFT", 0, 4)
+  b:SetPoint("BOTTOMRIGHT", fenetre, "TOPRIGHT", 0, 4)
+  local q, noms, race, classe = base(), {}, select(3, UnitRace("player")), select(3, UnitClass("player"))
+  for _, s in ipairs(ns.suite(q, id)) do
+    if ns.peutPrendre(q[s], race, classe) then -- pas les lettres des autres classes
+      if #noms == 3 then noms[4] = "…" break end
+      noms[#noms + 1] = (q[s] or {}).nom or titre(s)
+    end
+  end
+  b.texte:SetWidth(fenetre:GetWidth() - 20)
+  local texte = ("Abandonner « %s » l'écarte pour la Compagnie%s."):format(type(nom) == "string" and nom or titre(id),
+    #noms > 0 and " et coupe sa suite : " .. table.concat(noms, ", ") or "")
+  b.texte:SetText((texte:gsub("…%.$", "…")))
+  b:SetHeight(b.texte:GetStringHeight() + 16)
+  b:Show()
+end
+hooksecurefunc("StaticPopup_Show", bandeauAbandon)
 
 ---------------------------------------------------------------------------------------------------
 -- Messages d'add-on. Au groupe du jeu : d'un expéditeur que le serveur y nomme (son GUID vient du groupe) ; en
@@ -1024,7 +1240,7 @@ local cadre = CreateFrame("Frame", "CompagnieMessages")
 for _, ev in ipairs({ "ADDON_LOADED", "PLAYER_ENTERING_WORLD", "CHAT_MSG_ADDON", "GROUP_ROSTER_UPDATE", "QUEST_LOG_UPDATE",
   "QUEST_ACCEPTED", "QUEST_TURNED_IN", "PLAYER_LEVEL_UP", "UNIT_QUEST_LOG_CHANGED", "PLAYER_REGEN_ENABLED", "ZONE_CHANGED_NEW_AREA",
   "QUEST_PROGRESS", "QUEST_COMPLETE", "QUEST_DETAIL", "QUEST_GREETING", "QUEST_FINISHED", "BAG_UPDATE_COOLDOWN",
-  "HEARTHSTONE_BOUND" }) do cadre:RegisterEvent(ev) end
+  "HEARTHSTONE_BOUND", "QUEST_ACCEPT_CONFIRM" }) do cadre:RegisterEvent(ev) end
 cadre:SetScript("OnEvent", function(_, ev, a1, texte, canal, expediteur)
   if ev == "ADDON_LOADED" then
     if a1 == "Compagnie" then
@@ -1032,6 +1248,7 @@ cadre:SetScript("OnEvent", function(_, ev, a1, texte, canal, expediteur)
       e.db, e.moi = CompagnieDB, moi()
       connectes, chuchotes = {}, {} -- la présence repart de zéro (en jeu, un /reload efface tout l'état Lua)
       accrocherAbandons()
+      AC:Souscrire("base des quêtes") -- la suite d'une quête (#25), les zones et les prérequis (#24, #27)
       -- Pas de fenêtre ici : à ADDON_LOADED, les add-ons chargés après nous (Diagnostic, qui donne sa loupe aux
       -- fenêtres du socle) ne le sont pas encore. PLAYER_ENTERING_WORLD applique le mode.
       if not veille then veille = true; C_Timer.After(VEILLE, veiller) end
@@ -1042,6 +1259,7 @@ cadre:SetScript("OnEvent", function(_, ev, a1, texte, canal, expediteur)
     if a1 or texte then C_Timer.After(3, connexion) end -- connexion ou /reload, pas un écran de chargement
   elseif ev == "GROUP_ROSTER_UPDATE" or ev == "ZONE_CHANGED_NEW_AREA" then
     redessiner()
+    if ev == "ZONE_CHANGED_NEW_AREA" then suggererZone() end
   elseif ev == "PLAYER_REGEN_ENABLED" then
     if differe and ObjectiveTrackerFrame then appliquerSuiviDuJeu(ObjectiveTrackerFrame) end
     placerPierre()
@@ -1051,6 +1269,9 @@ cadre:SetScript("OnEvent", function(_, ev, a1, texte, canal, expediteur)
   elseif ev == "QUEST_DETAIL" or ev == "QUEST_GREETING" or ev == "QUEST_FINISHED" then
     remise = nil
     majBandeau()
+    if ev == "QUEST_DETAIL" then accepterQuete() end
+  elseif ev == "QUEST_ACCEPT_CONFIRM" then
+    confirmerEscorte(a1, texte)
   elseif ev == "QUEST_ACCEPTED" then
     -- Forever : (questID) ; d'autres clients Classic : (index, questID).
     local id = type(texte) == "number" and texte or a1
@@ -1095,7 +1316,20 @@ cadre:SetScript("OnEvent", function(_, ev, a1, texte, canal, expediteur)
 end)
 C_ChatInfo.RegisterAddonMessagePrefix(PREFIXE)
 
-AC.Regrouper({ nom = "Compagnie", dossier = "Compagnie", icone = "Interface\\Icons\\INV_Misc_Note_01", ouvrir = ouvrir })
+-- Les réglages (page de Compagnie dans les réglages fusionnés, faite une fois à l'entrée en jeu) : l'acceptation
+-- automatique (#26).
+local function reglages(page, ancre)
+  local cb = CreateFrame("CheckButton", "CompagnieAccepteAuto", page, "UICheckButtonTemplate")
+  cb:SetSize(26, 26)
+  cb:SetPoint("TOPLEFT", ancre, "BOTTOMLEFT", 0, -14)
+  local t = cb:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+  t:SetPoint("LEFT", cb, "RIGHT", 4, 0)
+  t:SetText("Accepter tout seul une quête qu'un autre membre a déjà (partage, PNJ, escorte)")
+  cb:SetChecked(e.db.accepteAuto ~= false)
+  cb:SetScript("OnClick", function(self) e.db.accepteAuto = self:GetChecked() and true or false end)
+end
+AC.Regrouper({ nom = "Compagnie", dossier = "Compagnie", icone = "Interface\\Icons\\INV_Misc_Note_01", ouvrir = ouvrir,
+  reglages = reglages })
 
 SLASH_COMPAGNIE1 = "/compagnie"
 SlashCmdList.COMPAGNIE = function(msg)
@@ -1103,5 +1337,6 @@ SlashCmdList.COMPAGNIE = function(msg)
   if cmd == "fonder" then return fonder() end
   if cmd == "quitter" then return ns.quitter(e, jeu) end
   if cmd == "suivi" then return basculerMode() end
+  if cmd == "zone" then return choisirZoneEnCours() end
   ouvrir()
 end
