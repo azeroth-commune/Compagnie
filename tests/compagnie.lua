@@ -1182,3 +1182,57 @@ test("Partager (#22) : un seul bouton, chaque clic partage la suivante ; une qu�
     end)
     eteindre()
 end)
+
+---------------------------------------------------------------------------------------------------
+-- Acceptation automatique (#26) : une quête qu'un autre membre a est acceptée à l'ouverture de sa fenêtre.
+
+test("acceptation automatique (#26) : la quête de Léo acceptée, pas une que personne n'a, ni une écartée, ni réglage éteint ; l'escorte de Léo confirmée", function()
+    local g = { GetQuestID = GetQuestID, AcceptQuest = AcceptQuest, ConfirmAcceptQuest = ConfirmAcceptQuest }
+    local quete, acceptees, confirmees = 1001, 0, 0
+    GetQuestID = function() return quete end
+    AcceptQuest = function() acceptees = acceptees + 1 end
+    ConfirmAcceptQuest = function() confirmees = confirmees + 1 end
+    local ok, err = pcall(function()
+        avecGroupe({}, false, function()
+            avecJournal({}, function()
+                fabriquer({ guid = LEO, nom = "Léo Lame" })
+                CompagnieDB.accepteAuto = nil -- allumée par défaut
+                CompagnieDB.etats = { [LEO] = { niveau = 5, rendues = {}, quetes = {
+                    [1001] = { finie = false, objectifs = {} }, [1003] = { finie = false, objectifs = {} } } } }
+                C_QuestLog.GetTitleForQuestID = function(id) return ({ [1001] = "Les pattes de loup", [1003] = "Les Kobolds" })[id] end
+                charger()
+                evenement("QUEST_DETAIL")
+                assertEquals(1, acceptees, "Léo a la quête : acceptée")
+                quete = 1005
+                evenement("QUEST_DETAIL")
+                assertEquals(1, acceptees, "personne ne l'a : la fenêtre s'ouvre normalement")
+                quete = 1003
+                CompagnieDB.ecartees = { [1003] = { ecartee = true, date = 1, par = "Léo" } }
+                evenement("QUEST_DETAIL")
+                assertEquals(1, acceptees, "écartée : pas acceptée")
+                -- Escorte lancée par Léo : confirmée ; une escorte écartée, ou lancée par un inconnu : non.
+                evenement("QUEST_ACCEPT_CONFIRM", "Léo", "Les pattes de loup")
+                assertEquals(1, confirmees, "l'escorte de Léo : confirmée")
+                evenement("QUEST_ACCEPT_CONFIRM", "Léo", "Les Kobolds")
+                evenement("QUEST_ACCEPT_CONFIRM", "Zoé", "Les pattes de loup")
+                assertEquals(1, confirmees, "écartée, ou lancée par un non-membre : non")
+                -- Le réglage, dans la page de Compagnie des réglages fusionnés : éteint, plus rien n'est accepté.
+                local cb = assert(CompagnieAccepteAuto, "la case des réglages")
+                assertTrue(cb:GetChecked(), "allumée par défaut")
+                cb:Click()
+                assertEquals(false, CompagnieDB.accepteAuto)
+                quete = 1001
+                evenement("QUEST_DETAIL")
+                evenement("QUEST_ACCEPT_CONFIRM", "Léo", "Les pattes de loup")
+                assertEquals(1, acceptees, "réglage éteint : pas acceptée")
+                assertEquals(1, confirmees, "réglage éteint : pas confirmée")
+                cb:Click()
+                assertNotEquals(false, CompagnieDB.accepteAuto)
+            end)
+        end)
+    end)
+    GetQuestID, AcceptQuest, ConfirmAcceptQuest = g.GetQuestID, g.AcceptQuest, g.ConfirmAcceptQuest
+    CompagnieDB.accepteAuto = nil
+    eteindre()
+    if not ok then error(err, 0) end
+end)

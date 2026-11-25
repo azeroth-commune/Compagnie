@@ -302,8 +302,8 @@ local function choixDeZone()
   return choix
 end
 
--- Le calcul de la Compagnie depuis mon journal et les derniers états connus (corrigés par le jeu pour mon groupe).
-local function calculer()
+-- Les membres du calcul : mon journal et les derniers états connus, corrigés par le jeu pour mon groupe.
+local function membresDuJeu()
   local presents, unites = presence()
   local liste = ns.membresDuCalcul(e.db, moi(), monEtat(), presents)
   local ids = {}
@@ -319,6 +319,11 @@ local function calculer()
       end)
     end
   end
+  return liste, presents, unites
+end
+-- Le calcul de la Compagnie.
+local function calculer()
+  local liste, presents, unites = membresDuJeu()
   return ns.calculer(liste, GetServerTime(), e.db.ecartees), presents, unites
 end
 local function titre(id) return titres[id] or C_QuestLog.GetTitleForQuestID(id) or ("Quête " .. id) end
@@ -361,6 +366,30 @@ local function bulleEcarter(owner)
   GameTooltip:SetOwner(owner, "ANCHOR_LEFT")
   GameTooltip:SetText("Clic droit : écarter pour la Compagnie", 1, 1, 1, true)
   GameTooltip:Show()
+end
+local function ecartee(id) local d = e.db.ecartees and e.db.ecartees[id] return d and d.ecartee end
+
+-- L'acceptation automatique (#26) : à l'ouverture de la fenêtre d'une quête (QUEST_DETAIL : partage ou PNJ), acceptée si
+-- un autre membre l'a dans son journal (dernier état connu, corrigé par le jeu pour mon groupe : un partage arrive avant
+-- l'état de qui partage) et qu'elle n'est pas écartée ; une confirmation d'escorte (QUEST_ACCEPT_CONFIRM : qui l'a
+-- lancée, titre), confirmée si un membre l'a lancée. Réglage CompagnieDB.accepteAuto, allumé par défaut (nil).
+local function accepteAuto() return e.db.compagnie and e.db.accepteAuto ~= false end
+local function accepterQuete()
+  local id = GetQuestID()
+  if not (accepteAuto() and type(id) == "number" and id > 0) or ecartee(id) then return end
+  for _, m in ipairs((membresDuJeu())) do
+    if m.nom ~= moi() and m.quetes and m.quetes[id] then return AcceptQuest() end
+  end
+end
+local function confirmerEscorte(qui, titreEscorte)
+  if not accepteAuto() then return end
+  for id in pairs(e.db.ecartees or {}) do if ecartee(id) and titre(id) == titreEscorte then return end end
+  for _, m in ipairs(e.db.compagnie.membres) do
+    if m.guid ~= moi() and (m.nom == qui or m.nom:match("^(%S+)") == qui) then
+      ConfirmAcceptQuest()
+      return StaticPopup_Hide("QUEST_ACCEPT") -- la fenêtre du jeu, montrée juste avant (Blizzard écoute avant nous)
+    end
+  end
 end
 
 -- Les blocs du suivi, un par quête (titre, objectifs, état) : { texte, quete = id d'une quête de la Compagnie (le clic
@@ -1024,7 +1053,7 @@ local cadre = CreateFrame("Frame", "CompagnieMessages")
 for _, ev in ipairs({ "ADDON_LOADED", "PLAYER_ENTERING_WORLD", "CHAT_MSG_ADDON", "GROUP_ROSTER_UPDATE", "QUEST_LOG_UPDATE",
   "QUEST_ACCEPTED", "QUEST_TURNED_IN", "PLAYER_LEVEL_UP", "UNIT_QUEST_LOG_CHANGED", "PLAYER_REGEN_ENABLED", "ZONE_CHANGED_NEW_AREA",
   "QUEST_PROGRESS", "QUEST_COMPLETE", "QUEST_DETAIL", "QUEST_GREETING", "QUEST_FINISHED", "BAG_UPDATE_COOLDOWN",
-  "HEARTHSTONE_BOUND" }) do cadre:RegisterEvent(ev) end
+  "HEARTHSTONE_BOUND", "QUEST_ACCEPT_CONFIRM" }) do cadre:RegisterEvent(ev) end
 cadre:SetScript("OnEvent", function(_, ev, a1, texte, canal, expediteur)
   if ev == "ADDON_LOADED" then
     if a1 == "Compagnie" then
@@ -1051,6 +1080,9 @@ cadre:SetScript("OnEvent", function(_, ev, a1, texte, canal, expediteur)
   elseif ev == "QUEST_DETAIL" or ev == "QUEST_GREETING" or ev == "QUEST_FINISHED" then
     remise = nil
     majBandeau()
+    if ev == "QUEST_DETAIL" then accepterQuete() end
+  elseif ev == "QUEST_ACCEPT_CONFIRM" then
+    confirmerEscorte(a1, texte)
   elseif ev == "QUEST_ACCEPTED" then
     -- Forever : (questID) ; d'autres clients Classic : (index, questID).
     local id = type(texte) == "number" and texte or a1
@@ -1095,7 +1127,20 @@ cadre:SetScript("OnEvent", function(_, ev, a1, texte, canal, expediteur)
 end)
 C_ChatInfo.RegisterAddonMessagePrefix(PREFIXE)
 
-AC.Regrouper({ nom = "Compagnie", dossier = "Compagnie", icone = "Interface\\Icons\\INV_Misc_Note_01", ouvrir = ouvrir })
+-- Les réglages (page de Compagnie dans les réglages fusionnés, faite une fois à l'entrée en jeu) : l'acceptation
+-- automatique (#26).
+local function reglages(page, ancre)
+  local cb = CreateFrame("CheckButton", "CompagnieAccepteAuto", page, "UICheckButtonTemplate")
+  cb:SetSize(26, 26)
+  cb:SetPoint("TOPLEFT", ancre, "BOTTOMLEFT", 0, -14)
+  local t = cb:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+  t:SetPoint("LEFT", cb, "RIGHT", 4, 0)
+  t:SetText("Accepter tout seul une quête qu'un autre membre a déjà (partage, PNJ, escorte)")
+  cb:SetChecked(e.db.accepteAuto ~= false)
+  cb:SetScript("OnClick", function(self) e.db.accepteAuto = self:GetChecked() and true or false end)
+end
+AC.Regrouper({ nom = "Compagnie", dossier = "Compagnie", icone = "Interface\\Icons\\INV_Misc_Note_01", ouvrir = ouvrir,
+  reglages = reglages })
 
 SLASH_COMPAGNIE1 = "/compagnie"
 SlashCmdList.COMPAGNIE = function(msg)
