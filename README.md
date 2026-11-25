@@ -63,8 +63,9 @@ Compatible avec Questie s'il est installé.
 
 ## Un souci ?
 
-Ouvre une [issue](https://github.com/azeroth-commune/Compagnie/issues) : ce que tu as fait, ce que tu attendais, ce qui
-s'est passé (et l'erreur Lua s'il y en a une).
+Tape `/ac retour` en jeu (ou bouton de minicarte → *Signaler un problème*), copie le rapport et colle-le dans une
+[issue](https://github.com/azeroth-commune/Compagnie/issues/new?template=retour.yml) ou un commentaire sur la page
+CurseForge, avec ce que tu as fait et ce qui s'est passé.
 
 ## Développement
 
