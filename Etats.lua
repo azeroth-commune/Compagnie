@@ -4,11 +4,12 @@
 --             rendues = { [idQuête] = true }, ecartees = { [idQuête] = { ecartee = true|false, date, par = "Léo" } },
 --             avant = { [idQuête] = true } (mes quêtes d'avant encore dans mon journal), renduesAvant = { [idQuête] = true },
 --             auberge = "Comté-de-l'Or", liaison = heure serveur de la liaison, finRecharge = heure serveur où la pierre
---             de foyer est prête } (les trois du foyer, #9 : nil quand inconnus, ou pierre prête)
+--             de foyer est prête (les trois du foyer, #9 : nil quand inconnus, ou pierre prête),
+--             zoneCompagnie = { zone = areaID, date, par = "Léo" } (#24 : la zone de la Compagnie, nil sans choix) }
 -- Le texte des objectifs ne part jamais (il porte un code de grammaire du jeu, « |4…; ») : seulement les nombres, dans
 -- l'ordre des objectifs ; chacun retrouve le texte dans son propre journal (Calcul.lua le prend chez qui l'a).
 -- Corps encodé : « niveau#quête;quête…#rendue,rendue…#zone=id,id;zone=id…#écartée;écartée…#auberge#liaison#fin
--- #avant,avant…#renduesAvant,renduesAvant… »,
+-- #avant,avant…#renduesAvant,renduesAvant…#zone:date:par »,
 -- une quête « id:finie(0|1)[:fait/total…] », ids triés. Le 4e champ (#13) range les quêtes par zone (l'en-tête de zone de mon journal), zones triées ; vide si
 -- aucune quête n'a de zone. Une zone : 1 à MAX_ZONE octets, ni caractère de contrôle, ni « | » (codes du chat), ni
 -- séparateur du format ; un en-tête de mon journal qui ne l'est pas ne part pas (la quête part sans zone). Le 5e champ
@@ -22,6 +23,8 @@
 -- pierre prête). Une heure et non une durée : un absent compte avec sa recharge recalculée depuis son envoi.
 -- Les 9e et 10e champs (#20) : mes quêtes d'avant (parmi les quêtes de l'état : une autre fait rejeter l'état), et
 -- les quêtes rendues avant mon entrée dans la Compagnie (le 3e champ : celles rendues depuis, vues par l'add-on).
+-- Le 11e champ (#24) : la zone de la Compagnie telle que je la connais, « areaID:date:par » (mêmes règles qu'une
+-- décision sur une quête écartée), vide sans zone choisie.
 -- Messages d'add-on (préfixe Compagnie) : « E;idCompagnie;envoi/i/n;morceau » (un état en n morceaux bornés à 255
 -- octets) et « D;idCompagnie » (demande d'état). L'expéditeur (de) est le GUID que Compagnie.lua tient du serveur.
 -- Donnée reçue entre membres (CONTEXT-MAP) : servie telle quelle, mais lue strictement (un champ mal formé et tout l'état
@@ -58,6 +61,11 @@ local function zoneValide(z)
   return type(z) == "string" and #z >= 1 and #z <= MAX_ZONE and not z:find("[%c|#;:,/=]")
 end
 
+-- Une décision datée (la zone de la Compagnie) : « valeur:date:par », vide sans décision.
+local function decision(d, cle)
+  return d and table.concat({ d[cle], d.date, zoneValide(d.par) and d.par or "?" }, ":") or ""
+end
+
 function ns.encoder(etat)
   local quetes, rendues, zones = {}, {}, {}
   for _, id in ipairs(trier(etat.quetes)) do
@@ -85,14 +93,14 @@ function ns.encoder(etat)
   return (etat.niveau or 0) .. "#" .. table.concat(quetes, ";") .. "#" .. table.concat(rendues, ",") .. "#" ..
     table.concat(parZone, ";") .. "#" .. table.concat(ecartees, ";") .. "#" ..
     (zoneValide(etat.auberge) and etat.auberge or "") .. "#" .. (etat.liaison or "") .. "#" .. (etat.finRecharge or "") ..
-    "#" .. table.concat(avant, ",") .. "#" .. table.concat(trier(etat.renduesAvant), ",")
+    "#" .. table.concat(avant, ",") .. "#" .. table.concat(trier(etat.renduesAvant), ",") .. "#" .. decision(etat.zoneCompagnie, "zone")
 end
 
 -- L'état, ou nil au moindre champ mal formé. maintenant : mon heure serveur (nil : pas de contrôle des dates, les tests
 -- du format).
 function ns.decoder(corps, maintenant)
   local f = couper(corps, "#")
-  local niveau = #f == 10 and entier(f[1], 200)
+  local niveau = #f == 11 and entier(f[1], 200)
   if not niveau or niveau < 1 then return end
   local etat = { niveau = niveau, quetes = {}, rendues = {}, ecartees = {}, avant = {}, renduesAvant = {} }
   local liste = f[2] == "" and {} or couper(f[2], ";")
@@ -140,6 +148,13 @@ function ns.decoder(corps, maintenant)
     if not zoneValide(f[6]) then return end
     etat.auberge = f[6]
   end
+  if f[11] ~= "" then
+    local c = couper(f[11], ":")
+    local z, date = entier(c[1], 2147483647), entier(c[2] or "", 2147483647)
+    if #c ~= 3 or not (z and z >= 1 and date and date >= 1) or not zoneValide(c[3])
+      or (maintenant and date > maintenant + AVENIR) then return end
+    etat.zoneCompagnie = { zone = z, date = date, par = c[3] }
+  end
   local vues = {}
   for _, champ in ipairs(f[4] == "" and {} or couper(f[4], ";")) do
     local z, ids = champ:match("^([^=]*)=(.*)$")
@@ -165,7 +180,7 @@ end
 
 -- Un message E ou D reçu de de (GUID). e = { db = CompagnieDB, moi = mon GUID } ; io = { maj = fn(), demande = fn(de),
 -- maintenant = fn() -> secondes (GetTime : le débit), heure = fn() -> heure serveur (les dates des décisions),
--- annoncer = fn(décisions à annoncer, voir ns.fusionner) }. Rend true si le message est un message d'état (traité ou ignoré).
+-- annoncer = fn(décisions à annoncer, voir ns.fusionner), zone = fn(zone de la Compagnie reçue, plus récente) }. Rend true si le message est un message d'état (traité ou ignoré).
 function ns.recevoirEtat(e, de, texte, io)
   local verbe, id, reste = texte:match("^([ED]);([^;]+);?(.*)$")
   if not verbe then return false end
@@ -191,9 +206,10 @@ function ns.recevoirEtat(e, de, texte, io)
   if not etat then return true end
   e.db.etats = e.db.etats or {}
   e.db.etats[de] = etat -- le dernier état connu : une donnée propre, sauvegardée
-  local changees = ns.fusionner(e.db, etat.ecartees)
+  local changees, zone = ns.fusionner(e.db, etat.ecartees), ns.fusionnerZone(e.db, etat.zoneCompagnie)
   io.maj()
   if #changees > 0 then io.annoncer(changees) end
+  if zone then io.zone(etat.zoneCompagnie) end
   return true
 end
 
@@ -219,6 +235,15 @@ function ns.fusionner(db, recues)
   end
   table.sort(changees, function(a, b) return a.quete < b.quete end)
   return changees
+end
+
+-- La zone de la Compagnie reçue avec l'état d'un membre (#24) : la plus récente l'emporte (à la même seconde, le plus
+-- grand areaID, pour que tous retiennent la même) ; rend true si elle a changé (à annoncer).
+function ns.fusionnerZone(db, recue)
+  local a = db.zoneCompagnie
+  if not recue or a and (recue.date < a.date or recue.date == a.date and recue.zone <= a.zone) then return false end
+  db.zoneCompagnie = { zone = recue.zone, date = recue.date, par = recue.par }
+  return true
 end
 
 -- Les remises datées de plus de OUBLI avant maintenant (heure serveur) sont oubliées : les décisions ne s'accumulent pas

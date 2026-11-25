@@ -79,6 +79,12 @@ _Avoid_: point de retour, bind
 **Pierre de la Compagnie**:
 La pierre de foyer vue par la Compagnie : disponible seulement quand celle de chaque membre l'est (même principe que l'avancement commun) ; pour un absent, la recharge est recalculée depuis son envoi. Le suivi la montre sur le bouton qui utilise ma pierre (« Foyer dans 40 min », « Rentrer au foyer »), sans dire à cause de qui ; le clic n'est jamais bloqué.
 
+### Zone
+
+**Zone de la Compagnie**:
+La zone où va la Compagnie, choisie par n'importe quel membre (sans vote ni chef : le choix le plus récent l'emporte, daté comme une décision sur une quête écartée) dans le menu de son bouton, en tête du suivi. Le menu propose les zones de la base des quêtes, d'abord celles dont la Compagnie a le **niveau d'entrée** (le niveau requis du premier quart des quêtes de la zone), les autres en grisé, choisissables. Les autres membres l'apprennent dans le chat, un absent à son retour. Entrer dans une autre zone propose de la choisir dans le chat, une fois par zone ; rien ne change tout seul. Elle n'a rien à voir avec le filtre d'affichage par zone du suivi, qui reste personnel.
+_Avoid_: zone (seul, ambigu avec la zone d'une quête ou le filtre), destination, zone cible
+
 ### Affichage
 
 **Mode Compagnie**:

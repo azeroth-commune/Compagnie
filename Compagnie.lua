@@ -171,6 +171,7 @@ function monEtat()
   local reste = (debut or 0) > 0 and (recharge or 0) > 1.5 and debut + recharge - GetTime() or 0 -- 1.5 s : temps global
   return { niveau = UnitLevel("player"), quetes = quetes, rendues = rendues, renduesAvant = renduesAvant, avant = avant,
     ecartees = e.db.ecartees, -- les décisions de la Compagnie (#21), telles que je les connais
+    zoneCompagnie = e.db.zoneCompagnie, -- la zone de la Compagnie (#24), telle que je la connais
     auberge = auberge ~= "" and auberge or nil, liaison = f and f.auberge == auberge and f.date or nil,
     finRecharge = reste > 0 and math.ceil((GetServerTime() + reste) / 60) * 60 or nil }
 end
@@ -217,7 +218,7 @@ local function diffuser(texte, tous)
   return ok
 end
 
-local redessiner, annoncer -- plus bas
+local redessiner, annoncer, annoncerZone -- plus bas
 local envoi = {
   programmer = function(delai, fn) C_Timer.After(delai, fn) end,
   monEtat = monEtat,
@@ -231,6 +232,7 @@ local reception = {
   -- Un état reçu : mes rendues suivent les quêtes des autres, mon état repart s'il a changé.
   maj = function() redessiner(); ns.signaler(e, false, envoi) end,
   annoncer = function(changees) annoncer(changees) end,
+  zone = function(z) annoncerZone(z) end,
   demande = function() ns.signaler(e, true, envoi) end,
   maintenant = GetTime,
   heure = GetServerTime,
@@ -348,6 +350,51 @@ local function decider(id, ecartee)
 end
 function annoncer(changees)
   for _, d in ipairs(changees) do jeu.dire(phrase(d.par .. " a", d, d.quete)) end
+end
+
+-- La zone de la Compagnie (#24) : choisie par n'importe quel membre dans le menu de son bouton, en tête du suivi (les
+-- zones de la base des quêtes, celles dont la Compagnie a le niveau d'entrée d'abord, les autres en grisé, choisissables).
+-- Le choix, daté, part avec mon état ; le plus récent l'emporte (Etats.lua) et le chat le dit. Entrer dans une autre zone
+-- de la base : une ligne dans le chat propose « /compagnie zone », une fois par zone et par session ; rien ne change seul.
+-- Indépendante du filtre d'affichage par zone (#13), qui reste personnel.
+local function nomZone(z) return C_Map.GetAreaInfo(z) or ("Zone " .. z) end
+local function choisirZone(z)
+  e.db.zoneCompagnie = { zone = z, date = math.floor(GetServerTime()), par = prenom(moi()) }
+  jeu.dire(("Tu as choisi %s pour la Compagnie."):format(nomZone(z)))
+  ns.signaler(e, false, envoi)
+  redessiner()
+end
+function annoncerZone(z) jeu.dire(("%s a choisi %s pour la Compagnie."):format(z.par, nomZone(z.zone))) end
+local function zoneDe(nom) -- l'areaID d'une zone de la base, d'après son nom (GetRealZoneText), ou nil
+  for _, z in ipairs(ns.zones(base(), 1)) do if nomZone(z.zone) == nom then return z.zone end end
+end
+local function choisirZoneEnCours()
+  local z = e.db.compagnie and zoneDe(zoneEnCours())
+  if not e.db.compagnie then return jeu.dire("Pas de Compagnie : fonde-la d'abord.") end
+  if not z then return jeu.dire("Cette zone n'est pas dans la base des quêtes : choisis la zone dans le suivi.") end
+  choisirZone(z)
+end
+local suggerees = {} -- [nom de zone] = true : proposée pendant cette session
+local function suggererZone()
+  local ici, zc = zoneEnCours(), e.db.zoneCompagnie
+  if not (e.db.compagnie and ici) or suggerees[ici] then return end
+  local z = zoneDe(ici)
+  if not z or zc and zc.zone == z then return end
+  suggerees[ici] = true
+  jeu.dire(("Tu entres en %s, qui n'est pas la zone de la Compagnie%s : « /compagnie zone » la choisit."):format(ici,
+    zc and " (" .. nomZone(zc.zone) .. ")" or ""))
+end
+local function menuZone(owner)
+  local niveau, actuelle = calculer().niveau, e.db.zoneCompagnie and e.db.zoneCompagnie.zone
+  MenuUtil.CreateContextMenu(owner, function(_, root)
+    root:CreateTitle("Zone de la Compagnie")
+    if root.SetScrollMode then root:SetScrollMode(400) end
+    for _, z in ipairs(ns.zones(base(), niveau)) do
+      local texte = ("%s (niv. %d)"):format(nomZone(z.zone), z.niveau)
+      root:CreateRadio(z.ouverte and texte or "|cff808080" .. texte .. "|r", function() return actuelle == z.zone end,
+        function() choisirZone(z.zone) end)
+    end
+  end)
 end
 StaticPopupDialogs.COMPAGNIE_ECARTER = {
   text = "Écarter « %s » ? La Compagnie ne la fera pas : elle sort du suivi de tous. « Remettre » dans la fenêtre de la " ..
@@ -578,7 +625,7 @@ local function placerPierre()
   b:SetShown(f:IsShown())
   if not f:IsShown() then return end
   b:ClearAllPoints()
-  b:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", f:GetLeft() + 14, f:GetTop() - 40)
+  b:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", f:GetLeft() + 14, f:GetTop() - 66)
 end
 local function duree(s)
   local m = math.ceil(s / 60)
@@ -628,10 +675,12 @@ local function dessinerSuivi(calc, presents, unites)
   if not calc then calc, presents, unites = calculer() end
   local hAFaire = remplirAFaire(CompagnieSuiviAFaire, mesEcarts(calc), unites)
   local h = placerLignes(blocsSuivi(calc, presents))
+  local zc = e.db.zoneCompagnie
+  CompagnieZoneBouton:SetText(zc and "Zone de la Compagnie : " .. nomZone(zc.zone) or "Choisir la zone de la Compagnie")
   CompagnieSuiviZone:SetText(libelleZone())
   CompagnieSuiviZone:SetWidth(CompagnieSuiviZone:GetFontString():GetStringWidth() + 22)
   CompagnieSuiviContenu:SetHeight(math.max(1, h))
-  f:SetHeight(math.min(134 + hAFaire + h, UIParent:GetHeight() * 0.6))
+  f:SetHeight(math.min(160 + hAFaire + h, UIParent:GetHeight() * 0.6))
   placerPierre()
   if CompagniePierre then CompagniePierre:SetText(calc.pierre > 0 and "Foyer dans " .. duree(calc.pierre) or "Rentrer au foyer") end
 end
@@ -717,8 +766,13 @@ local function ouvrirSuivi()
     f:ClearAllPoints()
     f:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", -40, -260) -- sous la minicarte
     f:SetFrameStrata("LOW")
-    titreDePartie(f, "À faire", -70) -- au-dessus : la pierre de la Compagnie (placerPierre)
-    local aFaire = listeAFaire(f, "CompagnieSuiviAFaire", -90)
+    -- En tête : la zone de la Compagnie (#24), son bouton ouvre le menu des zones ; dessous, la pierre (placerPierre).
+    local zc = CreateFrame("Button", "CompagnieZoneBouton", f, "UIPanelButtonTemplate")
+    zc:SetSize(262, 22)
+    zc:SetPoint("TOPLEFT", 14, -40)
+    zc:SetScript("OnClick", menuZone)
+    titreDePartie(f, "À faire", -96)
+    local aFaire = listeAFaire(f, "CompagnieSuiviAFaire", -116)
     -- Le filtre par zone : le titre de la partie Quêtes est la zone affichée ; un clic ouvre juste dessous la liste des
     -- zones de la Compagnie (avec leur nombre de quêtes), un clic en choisit une et la liste se ferme.
     local z = CreateFrame("Button", "CompagnieSuiviZone", f)
@@ -990,7 +1044,7 @@ end
 -- La Compagnie a changé : le mode suit, et mon état part (forcé : de nouveaux membres ne l'ont pas).
 function ns.majCompagnie()
   if not e.db.compagnie then -- plus de Compagnie : derniers états, écartées, quêtes d'avant et remises vues oubliés
-    e.db.etats, e.db.ecartees, e.db.avant, e.db.renduesVues = nil, nil, nil, nil
+    e.db.etats, e.db.ecartees, e.db.avant, e.db.renduesVues, e.db.zoneCompagnie = nil, nil, nil, nil, nil
   end
   appliquerMode()
   redessiner()
@@ -1123,6 +1177,7 @@ cadre:SetScript("OnEvent", function(_, ev, a1, texte, canal, expediteur)
     if a1 or texte then C_Timer.After(3, connexion) end -- connexion ou /reload, pas un écran de chargement
   elseif ev == "GROUP_ROSTER_UPDATE" or ev == "ZONE_CHANGED_NEW_AREA" then
     redessiner()
+    if ev == "ZONE_CHANGED_NEW_AREA" then suggererZone() end
   elseif ev == "PLAYER_REGEN_ENABLED" then
     if differe and ObjectiveTrackerFrame then appliquerSuiviDuJeu(ObjectiveTrackerFrame) end
     placerPierre()
@@ -1200,5 +1255,6 @@ SlashCmdList.COMPAGNIE = function(msg)
   if cmd == "fonder" then return fonder() end
   if cmd == "quitter" then return ns.quitter(e, jeu) end
   if cmd == "suivi" then return basculerMode() end
+  if cmd == "zone" then return choisirZoneEnCours() end
   ouvrir()
 end

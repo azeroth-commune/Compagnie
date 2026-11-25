@@ -153,3 +153,33 @@ local function dans(liste, x)
   return false
 end
 function ns.peutPrendre(q, race, classe) return not q or dans(q.races, race) and dans(q.classes, classe) end
+
+-- Les zones que propose le menu de la zone de la Compagnie (#24), d'après la base des quêtes (celles de la faction) :
+-- { { zone = areaID, niveau = niveau d'entrée, ouverte = la Compagnie l'a }, … }, les ouvertes d'abord (de la plus haute
+-- à la plus basse), puis les autres (de la plus basse à la plus haute). Le niveau d'entrée : le niveau requis du premier
+-- quart des quêtes de la zone (quelques quêtes de niveau 1 n'en font pas une zone de début).
+-- ponytail: une zone a au moins MIN_QUETES quêtes (les instances, à quelques quêtes, n'y sont pas) ; une liste des
+-- zones viendra si une zone manque.
+local MIN_QUETES = 10
+function ns.zones(base, niveau)
+  local requis, t = {}, {}
+  for _, q in pairs(base) do
+    if q.zone and q.zone > 0 then -- négative : une catégorie de QuestieDB (classe, métier…), pas une zone
+      requis[q.zone] = requis[q.zone] or {}
+      table.insert(requis[q.zone], q.niveau_requis or 1)
+    end
+  end
+  for z, r in pairs(requis) do
+    if #r >= MIN_QUETES then
+      table.sort(r)
+      local n = r[math.ceil(#r / 4)]
+      t[#t + 1] = { zone = z, niveau = n, ouverte = n <= (niveau or 1) }
+    end
+  end
+  table.sort(t, function(a, b)
+    if a.ouverte ~= b.ouverte then return a.ouverte end
+    if a.niveau ~= b.niveau then return a.ouverte == (a.niveau > b.niveau) end
+    return a.zone < b.zone
+  end)
+  return t
+end
