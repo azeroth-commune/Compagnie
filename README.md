@@ -22,7 +22,8 @@ with the shared progress: a quest is ready to turn in only when everyone is done
 - **La liste À faire** : « Partager » une quête que tu as et qu'un membre n'a pas (plusieurs : un seul bouton, chaque
   clic partage la suivante) ; « Abandonner aussi » une quête
   que la Compagnie a écartée. Un bouton chacun : l'add-on n'abandonne jamais rien tout seul. Mode Compagnie éteint, une
-  petite liste À faire reste à l'écran.
+  petite liste À faire reste à l'écran. Le suivi et cette liste ont le look du suivi des quêtes du jeu : on les déplace
+  par leur en-tête, son « – » masque la liste jusqu'au prochain changement, ou éteint le mode Compagnie.
 - **Écarter une quête** (« la Compagnie ne fait pas celle-là ») : clic droit sur elle dans le suivi ou la liste À faire ;
   abandonner une quête dans le jeu l'écarte aussi, la reprendre la remet. Elle sort du suivi de tous, le chat dit qui l'a
   écartée ; l'onglet **Écartées** de la fenêtre de la Compagnie la remet.

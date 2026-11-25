@@ -603,6 +603,25 @@ local function suivante(liste, unites)
   end
   return libres[1], #libres - 1, false
 end
+-- Les deux listes près de la minicarte ne sont pas des fenêtres (CONTEXT-MAP, Fenêtre) : un cadre nu du socle, avec
+-- l'en-tête du suivi des quêtes du jeu (son gabarit : titre doré, trait, bouton « – »). On les déplace par l'en-tête ; le
+-- « – » les ferme, comme la croix d'une fenêtre (bulle : ce que ça fait).
+local function entete(f, texte, bulle)
+  local h = CreateFrame("Frame", nil, f, "ObjectiveTrackerContainerHeaderTemplate")
+  h:SetPoint("TOPLEFT", 14, 0)
+  h:SetWidth(262)
+  h.Text:SetText(texte)
+  local moins = h.MinimizeButton
+  moins:SetScript("OnClick", function() f:Hide() end)
+  moins:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_LEFT")
+    GameTooltip:SetText(bulle, 1, 1, 1, 1, true)
+    GameTooltip:Show()
+  end)
+  moins:SetScript("OnLeave", function() GameTooltip:Hide() end)
+  f:DeplacePar(h)
+  f.entete = h
+end
 -- Une liste de boutons dans parent (le suivi, ou la petite liste), en haut à y ; rend sa hauteur.
 local function listeAFaire(parent, nom, y)
   local l = CreateFrame("Frame", nom, parent)
@@ -732,7 +751,7 @@ local function placerPierre()
   b:SetShown(f:IsShown())
   if not f:IsShown() then return end
   b:ClearAllPoints()
-  b:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", f:GetLeft() + 14, f:GetTop() - 66)
+  b:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", f:GetLeft() + 14, f:GetTop() - 62)
 end
 local function duree(s)
   local m = math.ceil(s / 60)
@@ -741,7 +760,7 @@ end
 
 -- Les lignes du suivi (CompagnieSuiviLigne1…), une par bloc, empilées dans le contenu qui défile ; rend leur hauteur.
 -- Clic droit sur une quête de la Compagnie : le menu Écarter. La molette passe au cadre qui défile ; le glisser déplace
--- le suivi, comme sur le reste de la fenêtre.
+-- le suivi, comme son en-tête.
 local lignesSuivi = {}
 local function placerLignes(blocs)
   local f, y = CompagnieSuiviFrame, 0
@@ -755,9 +774,7 @@ local function placerLignes(blocs)
       l.texte:SetWidth(244)
       l.texte:SetJustifyH("LEFT")
       l:RegisterForClicks("RightButtonUp")
-      l:RegisterForDrag("LeftButton")
-      l:SetScript("OnDragStart", function() f:StartMoving() end)
-      l:SetScript("OnDragStop", function() f:GetScript("OnDragStop")(f) end) -- place retenue (socle), pierre replacée
+      f:DeplacePar(l) -- place retenue (socle)
       l:SetScript("OnClick", function(self) if self.quete then menuEcarter(self, self.quete, self.sansEcarter) end end)
       l:SetScript("OnEnter", function(self)
         if self.sansEcarter then
@@ -794,12 +811,12 @@ local function dessinerSuivi(calc, presents, unites)
   CompagnieSuiviZone:SetText(libelleZone())
   CompagnieSuiviZone:SetWidth(CompagnieSuiviZone:GetFontString():GetStringWidth() + 22)
   CompagnieSuiviContenu:SetHeight(math.max(1, h))
-  f:SetHeight(math.min(160 + hAFaire + h, UIParent:GetHeight() * 0.6))
+  f:SetHeight(math.min(156 + hAFaire + h, UIParent:GetHeight() * 0.6))
   placerPierre()
   if CompagniePierre then CompagniePierre:SetText(calc.pierre > 0 and "Foyer dans " .. duree(calc.pierre) or "Rentrer au foyer") end
 end
 
--- La petite liste À faire, mode Compagnie éteint : montrée quand j'ai quelque chose à faire. Sa croix la ferme jusqu'à
+-- La petite liste À faire, mode Compagnie éteint : montrée quand j'ai quelque chose à faire. Son « – » la ferme jusqu'à
 -- ce que la liste change (un nouvel écart, ou un écart résorbé).
 local fermeeSur
 local function signature(ecarts)
@@ -825,18 +842,18 @@ local function dessinerPetiteListe()
   end
   if not f then
     -- Hauteur qui suit ses lignes ; à gauche de la minicarte (le suivi du jeu est dessous), ou là où le joueur l'a mise.
-    f = AC.Fenetre("CompagnieAFaireFrame", "À faire", 290, 80,
-      { redimensionnable = false, place = { "TOPRIGHT", Minimap, "TOPLEFT", -12, -20 } })
-    for i, n in ipairs(UISpecialFrames) do if n == "CompagnieAFaireFrame" then table.remove(UISpecialFrames, i) break end end
+    f = AC.Fenetre("CompagnieAFaireFrame", nil, 290, 80,
+      { cadre = false, place = { "TOPRIGHT", Minimap, "TOPLEFT", -12, -20 } })
     f:SetFrameStrata("LOW")
-    listeAFaire(f, "CompagniePetiteListe", -40)
+    entete(f, "À faire", "Masquer jusqu'au prochain changement")
+    listeAFaire(f, "CompagniePetiteListe", -36)
     f:HookScript("OnHide", function(self)
       if not masquageInterne and not self:IsShown() then fermeeSur = signature(mesEcarts(calculer())) end
     end)
   end
   fermeeSur = nil
   f:Show()
-  f:SetHeight(52 + remplirAFaire(CompagniePetiteListe, ecarts, unites))
+  f:SetHeight(40 + remplirAFaire(CompagniePetiteListe, ecarts, unites))
 end
 
 -- La fenêtre de remise (#8) : quand je vais rendre une quête (QUEST_PROGRESS, QUEST_COMPLETE) dont l'avancement commun
@@ -872,18 +889,18 @@ end
 local function ouvrirSuivi()
   if not CompagnieSuiviFrame then
     -- Hauteur qui suit son contenu (dessinerSuivi) ; sous la minicarte, ou là où le joueur l'a mis.
-    local f = AC.Fenetre("CompagnieSuiviFrame", "Compagnie", 290, 160,
-      { redimensionnable = false, place = { "TOPRIGHT", UIParent, "TOPRIGHT", -40, -260 } })
-    -- Un suivi reste à l'écran : Échap ne le ferme pas (la croix éteint le mode Compagnie).
-    for i, n in ipairs(UISpecialFrames) do if n == "CompagnieSuiviFrame" then table.remove(UISpecialFrames, i) break end end
+    local f = AC.Fenetre("CompagnieSuiviFrame", nil, 290, 160,
+      { cadre = false, place = { "TOPRIGHT", UIParent, "TOPRIGHT", -40, -260 } })
     f:SetFrameStrata("LOW")
+    -- Un suivi reste à l'écran : Échap ne le ferme pas (cadre nu) ; son « – » éteint le mode Compagnie.
+    entete(f, "Compagnie", "Éteindre le mode Compagnie (le suivi du jeu revient)")
     -- En tête : la zone de la Compagnie (#24), son bouton ouvre le menu des zones ; dessous, la pierre (placerPierre).
     local zc = CreateFrame("Button", "CompagnieZoneBouton", f, "UIPanelButtonTemplate")
     zc:SetSize(262, 22)
-    zc:SetPoint("TOPLEFT", 14, -40)
+    zc:SetPoint("TOPLEFT", 14, -36)
     zc:SetScript("OnClick", menuZone)
-    titreDePartie(f, "À faire", -96)
-    local aFaire = listeAFaire(f, "CompagnieSuiviAFaire", -116)
+    titreDePartie(f, "À faire", -92)
+    local aFaire = listeAFaire(f, "CompagnieSuiviAFaire", -112)
     -- Le filtre par zone : le titre de la partie Quêtes est la zone affichée ; un clic ouvre juste dessous la liste des
     -- zones de la Compagnie (avec leur nombre de quêtes), un clic en choisit une et la liste se ferme.
     local z = CreateFrame("Button", "CompagnieSuiviZone", f)
@@ -948,14 +965,15 @@ local function ouvrirSuivi()
     end)
     -- Beaucoup de quêtes : la fenêtre s'arrête à 60 % de l'écran et les quêtes défilent (molette).
     local defil = CreateFrame("ScrollFrame", "CompagnieSuiviDefil", f, "UIPanelScrollFrameTemplate")
+    defil.scrollBarHideable = true -- sans cadre, la barre ne se montre que s'il y a à faire défiler
     defil:SetPoint("TOPLEFT", z, "BOTTOMLEFT", 0, -4)
     defil:SetPoint("BOTTOMRIGHT", -32, 12)
     local contenu = CreateFrame("Frame", "CompagnieSuiviContenu", defil)
     contenu:SetSize(244, 1)
     defil:SetScrollChild(contenu)
-    -- Fermée par sa croix (pas quand l'interface entière est cachée, Alt-Z : elle reste « montrée ») : mode éteint.
+    -- Fermée par son « – » (pas quand l'interface entière est cachée, Alt-Z : elle reste « montrée ») : mode éteint.
     f:HookScript("OnShow", placerPierre)
-    f:HookScript("OnDragStop", placerPierre)
+    hooksecurefunc(f, "StopMovingOrSizing", placerPierre) -- fin d'un déplacement, par l'en-tête ou une ligne
     f:HookScript("OnHide", function(self)
       placerPierre()
       if masquageInterne or self:IsShown() then return end

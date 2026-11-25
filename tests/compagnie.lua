@@ -431,8 +431,8 @@ test("le suivi du jeu est masqué en mode Compagnie et revient quand on l'étein
             assertTrue(contient(CompagnieModeBouton:GetText(), "oui"), CompagnieModeBouton:GetText())
             assertTrue(not ObjectiveTrackerFrame:IsShown() and CompagnieSuiviFrame:IsShown(), "rallumé")
             CompagnieFrame:Hide()
-            -- La croix du suivi éteint le mode.
-            dits(function() CompagnieSuiviFrame:Hide() end)
+            -- Le « – » du suivi éteint le mode.
+            dits(function() CompagnieSuiviFrame.entete.MinimizeButton:Click() end)
             assertEquals(false, CompagnieDB.modeCompagnie)
             assertTrue(ObjectiveTrackerFrame:IsShown(), "fermé : le suivi du jeu revient")
             -- Quitter la Compagnie le rend aussi.
@@ -852,7 +852,7 @@ test("la liste À faire se dessine avec ses boutons ; aucun abandon sans un clic
     eteindre()
 end)
 
-test("mode Compagnie éteint : la petite liste À faire reste visible ; sa croix la ferme jusqu'au prochain changement", function()
+test("mode Compagnie éteint : la petite liste À faire reste visible ; son « – » la ferme jusqu'au prochain changement", function()
     avecGroupe({}, false, function()
         avecJournal({ pattes(3), KOBOLDS }, function()
             fabriquer({ guid = LEO, nom = "Léo Lame" })
@@ -870,11 +870,11 @@ test("mode Compagnie éteint : la petite liste À faire reste visible ; sa croix
             -- Léo prend les Kobolds : rien à faire, la petite liste se cache.
             chuchote("E;essai;1/1/1;5#1001:0;1003:0########" .. FIN)
             assertTrue(not CompagnieAFaireFrame:IsShown(), "rien à faire : cachée")
-            -- Léo abandonne les pattes : elle revient ; sa croix la ferme, elle reste fermée tant que la liste ne change pas.
+            -- Léo abandonne les pattes : elle revient ; son « – » la ferme, elle reste fermée tant que la liste ne change pas.
             chuchote("E;essai;2/1/1;5#1003:0###1001:1:100:Léo#####" .. FIN)
             assertTrue(CompagnieAFaireFrame:IsShown(), "un écart : visible")
             assertEquals("Abandonner aussi : Les pattes de loup", bouton("CompagniePetiteListe1"):GetText())
-            CompagnieAFaireFrame:Hide() -- la croix
+            CompagnieAFaireFrame.entete.MinimizeButton:Click() -- son « – »
             evenement("QUEST_LOG_UPDATE")
             ecouler(1)
             evenement("GROUP_ROSTER_UPDATE")
@@ -1654,10 +1654,16 @@ test("fenêtres du socle (#31) : la Compagnie s'agrandit, colonne Membre extensi
     assertTrue(celluleNom():GetWidth() >= avant + 119, "la colonne Membre prend la largeur gagnée : " .. avant .. " → " .. celluleNom():GetWidth())
     f:Hide()
     CompagnieDB.compagnie = nil
-    -- Les deux listes près de la minicarte (créées par les tests d'avant) : pas de poignée, place par défaut.
+    -- Les deux listes près de la minicarte (créées par les tests d'avant) : pas des fenêtres (cadre nu, en-tête du suivi
+    -- des quêtes du jeu), en LOW, place par défaut.
     for _, l in ipairs({ CompagnieAFaireFrame, CompagnieSuiviFrame }) do
         assertNil(l.ResizeButton, l:GetName() .. " : pas de poignée")
+        assertTrue(l.NineSlice == nil and l.CloseButton == nil and l.title == nil, l:GetName() .. " : pas de cadre de fenêtre")
+        assertNotNil(l.entete and l.entete.MinimizeButton, l:GetName() .. " : l'en-tête du suivi des quêtes et son « – »")
+        assertEquals("LOW", l:GetFrameStrata())
     end
+    assertEquals("À faire", CompagnieAFaireFrame.entete.Text:GetText())
+    assertEquals("Compagnie", CompagnieSuiviFrame.entete.Text:GetText())
     assertEquals(Minimap, select(2, CompagnieAFaireFrame:GetPoint(1)), "À faire : à gauche de la minicarte")
     -- Glisser le suivi par une de ses lignes retient sa place (pas sa taille, qui suit le contenu).
     AzerothCommuneDB.fenetres = AzerothCommuneDB.fenetres or {}
@@ -1665,5 +1671,13 @@ test("fenêtres du socle (#31) : la Compagnie s'agrandit, colonne Membre extensi
     CompagnieSuiviLigne1:GetScript("OnDragStop")(CompagnieSuiviLigne1)
     local g = AzerothCommuneDB.fenetres.CompagnieSuiviFrame
     assertTrue(g and g.x and g.y and not g.w, "place retenue, sans taille")
+    -- Par son en-tête, la petite liste aussi.
+    AzerothCommuneDB.fenetres.CompagnieAFaireFrame = nil
+    local h = CompagnieAFaireFrame.entete
+    h:GetScript("OnDragStart")(h, "LeftButton")
+    h:GetScript("OnDragStop")(h)
+    g = AzerothCommuneDB.fenetres.CompagnieAFaireFrame
+    assertTrue(g and g.x and g.y and not g.w, "À faire : place retenue par l'en-tête")
     AzerothCommuneDB.fenetres.CompagnieSuiviFrame = nil
+    AzerothCommuneDB.fenetres.CompagnieAFaireFrame = nil
 end)
