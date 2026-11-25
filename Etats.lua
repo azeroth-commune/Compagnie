@@ -2,7 +2,8 @@
 -- aucun appel à l'API du jeu (vérifié par check.lua) ; Compagnie.lua lit mon journal en direct et transporte les messages.
 -- Un état : { niveau = 35, race = 1, classe = 2 (#7 : raceID, classID ; nil : inconnues),
 --             quetes = { [idQuête] = { finie = false, objectifs = { { fait = 2, total = 10 }, … }, zone = "…",
---             personnelle = true (#7 : marquée à la main) } },
+--             personnelle = true (#7 : marquée à la main), partageable = false (#6 : le jeu ne la partage pas),
+--             origine = { nom = "Maréchal Dughan" (nil : un objet ramassé), carte = uiMapID, x, y (%, entiers) } (#6) } },
 --             rendues = { [idQuête] = true }, ecartees = { [idQuête] = { ecartee = true|false, date, par = "Léo" } },
 --             avant = { [idQuête] = true } (mes quêtes d'avant encore dans mon journal), renduesAvant = { [idQuête] = true },
 --             auberge = "Comté-de-l'Or", liaison = heure serveur de la liaison, finRecharge = heure serveur où la pierre
@@ -14,7 +15,8 @@
 -- l'ordre des objectifs ; chacun retrouve le texte dans son propre journal (Calcul.lua le prend chez qui l'a).
 -- Corps encodé : « niveau[:race:classe]#quête;quête…#rendue,rendue…#zone=id,id;zone=id…#écartée;écartée…#auberge#liaison#fin
 -- #avant,avant…#renduesAvant,renduesAvant…#zone:date:par#zone=quête:prérequis,…#date=serveur-id:nom,… »,
--- une quête « id:finie(0|1)[p][:fait/total…] » (p : marquée personnelle, #7), ids triés. Le 4e champ (#13) range les quêtes par zone (l'en-tête de zone de mon journal), zones triées ; vide si
+-- une quête « id:finie(0|1)[p][n][:fait/total…] » (p : marquée personnelle, #7 ; n : non partageable, #6 ; partageable
+-- ne part pas, le jeu ne le dit que pour mes quêtes), ids triés. Le 4e champ (#13) range les quêtes par zone (l'en-tête de zone de mon journal), zones triées ; vide si
 -- aucune quête n'a de zone. Une zone : 1 à MAX_ZONE octets, ni caractère de contrôle, ni « | » (codes du chat), ni
 -- séparateur du format ; un en-tête de mon journal qui ne l'est pas ne part pas (la quête part sans zone). Le 5e champ
 -- (#21) : les décisions de la Compagnie sur les quêtes écartées, telles que je les connais, « id:1|0:date:par » (1 :
@@ -33,7 +35,10 @@
 -- vide : pas de zone), au plus MAX_PREREQUIS, les premiers par quête ; jamais mes quêtes rendues (trop lourd). Le 13e
 -- (#23) : la liste des membres de la Compagnie telle que je la connais, « date=serveur-id:Prénom Nom,… » (date : celle
 -- du dernier changement de la liste, Membres.lua ; le GUID sans « Player- » ; le nom, mêmes règles qu'une zone), de 2 à
--- ns.MAX membres, vide hors d'une Compagnie.
+-- ns.MAX membres, vide hors d'une Compagnie. Le 14e (#6) : où j'ai pris mes quêtes non partageables, « id=PNJ@carte:x:y;… »
+-- (le PNJ quand je l'ai acceptée, ou rien pour l'objet ramassé qui la lance ; ma position, sans « @… » dans une instance ;
+-- au moins l'un des deux ; le nom, mêmes règles qu'une zone, sans « @ » ; x et y de 0 à 100), ids triés. Il passe en
+-- dernier : les origines remplissent la place qui reste dans MAX_MORCEAUX (PLACE), les suivantes ne partent pas.
 -- Messages d'add-on (préfixe Compagnie) : « E;idCompagnie;envoi/i/n;morceau » (un état en n morceaux bornés à 255
 -- octets) et « D;idCompagnie » (demande d'état). L'expéditeur (de) est le GUID que Compagnie.lua tient du serveur.
 -- Donnée reçue entre membres (CONTEXT-MAP) : servie telle quelle, mais lue strictement (un champ mal formé et tout l'état
@@ -44,6 +49,10 @@ local MAX_ZONE = 48 -- octets : « Contreforts de Hautebrande » en fait 26
 -- Un journal plein (25 quêtes) + 20 décisions + la zone, les prérequis et la liste des membres tient dans MAX_MORCEAUX
 -- (check.lua) ; 20 et non plus 30 : une décision emporte désormais toute la chaîne de la quête (#27).
 local MAX_ECARTEES, MAX_PREREQUIS = 20, 8
+-- Octets d'un état : MAX_MORCEAUX morceaux, chacun sans son en-tête « E;id;99/10/10; » (id : un GUID et l'heure
+-- serveur, Compagnie.lua, 33 caractères au plus). ponytail: au-delà, les origines (#6) ne partent pas ; l'écart reste,
+-- avec l'endroit de la base des quêtes.
+local PLACE = MAX_MORCEAUX * (255 - #"E;Player-99999-0A1B2C3D-1764000000;99/10/10;")
 local AVENIR, OUBLI = 86400, 7 * 86400 -- secondes : une décision à plus d'un jour est rejetée ; une remise oubliée à 7 jours
 ns.DELAI_ENVOI = 3 -- secondes : une rafale d'événements part en un seul envoi
 
@@ -71,6 +80,7 @@ end
 local function zoneValide(z)
   return type(z) == "string" and #z >= 1 and #z <= MAX_ZONE and not z:find("[%c|#;:,/=]")
 end
+local function nomValide(n) return zoneValide(n) and not n:find("@", 1, true) end -- le nom d'un PNJ (#6)
 
 -- Une décision datée (la zone de la Compagnie) : « valeur:date:par », vide sans décision.
 local function decision(d, cle)
@@ -98,7 +108,7 @@ function ns.encoder(etat)
   local quetes, rendues, zones = {}, {}, {}
   for _, id in ipairs(trier(etat.quetes)) do
     local q = etat.quetes[id]
-    local t = { id, (q.finie and 1 or 0) .. (q.personnelle and "p" or "") }
+    local t = { id, (q.finie and 1 or 0) .. (q.personnelle and "p" or "") .. (q.partageable == false and "n" or "") }
     for _, o in ipairs(q.objectifs or {}) do t[#t + 1] = o.fait .. "/" .. o.total end
     quetes[#quetes + 1] = table.concat(t, ":")
     if zoneValide(q.zone) then zones[q.zone] = zones[q.zone] or {}; table.insert(zones[q.zone], id) end
@@ -120,17 +130,28 @@ function ns.encoder(etat)
   local parZone = {}
   for _, z in ipairs(trier(zones)) do parZone[#parZone + 1] = z .. "=" .. table.concat(zones[z], ",") end
   local niveau = (etat.niveau or 0) .. (etat.race and etat.classe and ":" .. etat.race .. ":" .. etat.classe or "")
-  return niveau .. "#" .. table.concat(quetes, ";") .. "#" .. table.concat(rendues, ",") .. "#" ..
+  local corps = niveau .. "#" .. table.concat(quetes, ";") .. "#" .. table.concat(rendues, ",") .. "#" ..
     table.concat(parZone, ";") .. "#" .. table.concat(ecartees, ";") .. "#" ..
     (zoneValide(etat.auberge) and etat.auberge or "") .. "#" .. (etat.liaison or "") .. "#" .. (etat.finRecharge or "") ..
     "#" .. table.concat(avant, ",") .. "#" .. table.concat(trier(etat.renduesAvant), ",") .. "#" .. decision(etat.zoneCompagnie, "zone") .. "#" .. prerequis(etat.prerequis) .. "#" .. listeMembres(etat.liste)
+  local origines, place = {}, PLACE - #corps - 1
+  for _, id in ipairs(trier(etat.quetes)) do
+    local q = etat.quetes[id]
+    local o = q.partageable == false and q.origine or {}
+    local x = (nomValide(o.nom) and "=" .. o.nom or "") .. (o.carte and o.x and o.y and "@" .. o.carte .. ":" .. o.x .. ":" .. o.y or "")
+    if x ~= "" and #x + #tostring(id) < place then
+      origines[#origines + 1] = id .. x
+      place = place - #origines[#origines] - 1
+    end
+  end
+  return corps .. "#" .. table.concat(origines, ";")
 end
 
 -- L'état, ou nil au moindre champ mal formé. maintenant : mon heure serveur (nil : pas de contrôle des dates, les tests
 -- du format).
 function ns.decoder(corps, maintenant)
   local f = couper(corps, "#")
-  local n, rc, race, classe = (#f == 13 and f[1] or ""):match("^(%d+)(:?(%d*):?(%d*))$")
+  local n, rc, race, classe = (#f == 14 and f[1] or ""):match("^(%d+)(:?(%d*):?(%d*))$")
   local niveau = n and entier(n, 200)
   race, classe = race and entier(race, 999), classe and entier(classe, 999)
   if not niveau or niveau < 1 or rc ~= "" and not (race and classe and rc == ":" .. race .. ":" .. classe) then return end
@@ -140,7 +161,7 @@ function ns.decoder(corps, maintenant)
   for _, q in ipairs(liste) do
     local c = couper(q, ":")
     local id = entier(c[1], 2147483647) -- questID : entier 32 bits signé
-    local finie, perso = (c[2] or ""):match("^([01])(p?)$")
+    local finie, perso, np = (c[2] or ""):match("^([01])(p?)(n?)$")
     if not id or id < 1 or etat.quetes[id] or not finie or #c - 2 > MAX_OBJECTIFS then return end
     local objectifs = {}
     for k = 3, #c do
@@ -150,6 +171,7 @@ function ns.decoder(corps, maintenant)
       objectifs[k - 2] = { fait = a, total = b }
     end
     etat.quetes[id] = { finie = finie == "1", personnelle = perso == "p" or nil, objectifs = objectifs }
+    if np == "n" then etat.quetes[id].partageable = false end
   end
   liste = f[5] == "" and {} or couper(f[5], ";")
   if #liste > MAX_ECARTEES then return end
@@ -224,6 +246,15 @@ function ns.decoder(corps, maintenant)
       if not q or q.zone then return end -- une quête absente de l'état, ou rangée deux fois
       q.zone = z
     end
+  end
+  for _, x in ipairs(f[14] == "" and {} or couper(f[14], ";")) do
+    local id, egal, nom, pos = x:match("^(%d+)(=?)([^@]*)(.*)$")
+    local q = id and etat.quetes[entier(id, 2147483647) or 0]
+    local carte, px, py = (pos or ""):match("^@(%d+):(%d+):(%d+)$")
+    carte, px, py = carte and entier(carte, 2147483647), px and entier(px, 100), py and entier(py, 100)
+    if not (q and q.partageable == false and not q.origine) or (egal == "") ~= (nom == "") or nom ~= "" and not nomValide(nom)
+      or pos ~= "" and not (carte and carte >= 1 and px and py) or nom == "" and pos == "" then return end
+    q.origine = { nom = nom ~= "" and nom or nil, carte = carte, x = px, y = py }
   end
   return etat
 end

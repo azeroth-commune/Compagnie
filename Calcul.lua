@@ -7,7 +7,10 @@
 --     auberge = "Comté-de-l'Or", liaison = 1764000000, finRecharge = 1764002400 } (heures serveur ; nil : inconnu, ou
 --     pierre prête)
 --     (une quête peut porter sa zone : zone = "Forêt d'Elwynn", et partageable = true : seulement dans mon journal, lu
---     en direct, le jeu ne le dit que pour mes quêtes ; personnelle = true : marquée à la main par le membre, #7)
+--     en direct, le jeu ne le dit que pour mes quêtes ; personnelle = true : marquée à la main par le membre, #7 ;
+--     partageable = false : dans mon journal et dans l'état reçu d'un membre, #6, avec origine = { nom = "Maréchal
+--     Dughan" (nil : un objet ramassé), carte = uiMapID, x, y (en %) } : où il l'a prise, PNJ à l'acceptation ou
+--     position du ramassage de l'objet qui la lance, nil : pas relevé)
 -- maintenant : l'heure serveur (pour la pierre de la Compagnie).
 -- ecartees : les décisions de la Compagnie (#21), { [idQuête] = { ecartee = true (false : remise), date, par = "Léo" } } ;
 --   une quête écartée emporte sa chaîne (#27, ns.ecarteesEffectives).
@@ -24,6 +27,8 @@
 --                      { type = "avance", membre = "Léo", quete = id, par = { "Virgile" } },
 --                      { type = "foyer", membre = "Léo", auberge = "Comté-de-l'Or" },
 --                      { type = "niveau", membre = "Virgile", quete = id, niveau = 10 },
+--                      { type = "prendre", membre = "Léo", quete = id, donneur = { nom, carte, x, y } ou nil,
+--                        objet = { id, nom, pnjs, objets, ramasse = { carte, x, y } ou nil } ou nil },
 --                      { type = "prerequis", membre = "Léo", quete = id, prerequis = id, chaine, zone, donneur, manquants,
 --                        tous, aControler } },
 --           aControler = { "Mira" } }
@@ -134,6 +139,10 @@ end
 --     la Compagnie », à la place de « Partager » ; résorbé quand ce membre a le niveau (un membre sans niveau : jamais
 --     entendu, il ne retient pas).
 --   - foyer différent : un membre lié à une autre auberge que le foyer (sans quête : en tête de liste).
+--   - quête à prendre soi-même (#6) : un membre l'a, non partageable (partageable = false), d'autres ne l'ont ni en
+--     cours ni rendue : chez chacun d'eux, avec l'endroit. Lancée par un objet (base : objet), l'objet, où un membre l'a
+--     ramassé (son origine relevée) et d'où il vient d'après la base ; sinon le PNJ : relevé par un membre, sinon le
+--     donneur de la base (le PNJ que personne n'a vu) ; ni l'un ni l'autre : sans endroit. Résorbée quand il l'a.
 --   - prérequis manquant (#27) : sur la zone de la Compagnie, chez chaque membre qui ne l'a pas fait : la quête
 --     débloquée, le prérequis et sa chaîne (ns.chaine), sa zone, le donneur de la première quête, les membres à qui il
 --     manque (tous : « toute la Compagnie »), ceux à contrôler ; résorbé quand le membre l'a fait, ou que la quête
@@ -143,7 +152,7 @@ end
 -- Rend aussi les membres à contrôler (#27) : ceux dont l'état ne couvre pas la zone de la Compagnie (absent depuis le
 -- choix, jamais entendu) ; on ne sait pas ce qui leur manque, on ne leur prête rien.
 function ns.ecarts(membres, foyer, communes, ecartees, base, zone, appris)
-  local t, rendues = {}, {}
+  local t, rendues, aPrendre = {}, {}, {} -- aPrendre : [id] = la première origine relevée, ou false
   for _, m in ipairs(membres) do
     if foyer and m.auberge and m.auberge ~= foyer then t[#t + 1] = { type = "foyer", membre = m.nom, auberge = foyer } end
     for id in pairs(m.rendues or {}) do rendues[id] = rendues[id] or {}; table.insert(rendues[id], m.nom) end
@@ -165,7 +174,19 @@ function ns.ecarts(membres, foyer, communes, ecartees, base, zone, appris)
         if bas then t[#t + 1] = { type = "niveau", membre = m.nom, quete = id, niveau = requis }
         elseif q.partageable and #manquants > 0 then
           t[#t + 1] = { type = "partager", membre = m.nom, quete = id, manquants = manquants }
+        elseif q.partageable == false and #manquants > 0 then aPrendre[id] = aPrendre[id] or q.origine or false
         end
+      end
+    end
+  end
+  for id, r in pairs(aPrendre) do
+    local b = base[id] or {}
+    local o = b.origine or {}
+    local objet = b.objet and { id = b.objet, nom = o.nom, pnjs = o.pnjs, objets = o.objets, ramasse = r and r.carte and r or nil }
+    local donneur = not objet and (r and r.nom and r or b.donneur) or nil
+    for _, n in ipairs(membres) do
+      if not (n.quetes and n.quetes[id] or rendue(n, id)) then
+        t[#t + 1] = { type = "prendre", membre = n.nom, quete = id, donneur = donneur, objet = objet }
       end
     end
   end

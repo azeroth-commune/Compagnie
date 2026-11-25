@@ -101,11 +101,65 @@ c = ns.calculer({
 })
 local x = seul(c.aFaire, "partager", "Virgile", KOBOLDS)
 assert(#x.manquants == 2 and x.manquants[1] == "Léo" and x.manquants[2] == "Mira", "Léo et Mira ne l'ont pas")
--- Non partageable (ou pas dit, la quête d'un autre membre) : pas « à partager » (c'est « à prendre soi-même », plus tard).
+-- Non partageable : pas « à partager » (« à prendre soi-même », ci-dessous) ; pas dit (partageable inconnu) : rien.
 c = ns.calculer({ { nom = "Virgile", niveau = 5, quetes = { [KOBOLDS] = kobolds(false) } }, { nom = "Léo", niveau = 5, quetes = {} } })
-assert(#c.aFaire == 0, "non partageable : pas à partager")
+seul(c.aFaire, "prendre", "Léo", KOBOLDS)
 c = ns.calculer({ { nom = "Virgile", niveau = 5, quetes = {} }, { nom = "Léo", niveau = 5, quetes = { [KOBOLDS] = kobolds() } } })
 assert(#c.aFaire == 0, "partageable inconnu : rien")
+
+-- Quête à prendre soi-même (#6) : non partageable chez un seul membre → « à prendre soi-même » chez chacun des autres
+-- (un absent compris), avec le PNJ et sa position : le relevé du membre qui l'a prise (origine : où il l'a acceptée).
+local DUGHAN = { nom = "Maréchal Dughan", carte = 1429, x = 42, y = 65 }
+local function aPrendre(origine) return { finie = false, objectifs = {}, partageable = false, origine = origine } end
+c = ns.calculer({ { nom = "Virgile", niveau = 5, quetes = { [KOBOLDS] = aPrendre(DUGHAN) } },
+  { nom = "Léo", niveau = 5, quetes = {} }, { nom = "Mira", niveau = 5, absent = true, quetes = {} } })
+assert(#c.aFaire == 2 and c.aFaire[1].type == "prendre" and c.aFaire[2].type == "prendre", "à prendre chez Léo et Mira")
+x = c.aFaire[1]
+assert(x.membre == "Léo" and c.aFaire[2].membre == "Mira" and x.quete == KOBOLDS, "chez ceux qui ne l'ont pas")
+assert(x.donneur.nom == "Maréchal Dughan" and x.donneur.carte == 1429 and x.donneur.x == 42 and x.donneur.y == 65,
+  "le PNJ et sa position, relevés par Virgile")
+assert(x.objet == nil, "pas d'objet de départ")
+-- Sans relevé : le donneur de la base des quêtes (le PNJ que personne n'a encore vu) ; le relevé passe devant la base.
+local BASE6 = { [KOBOLDS] = { donneur = { pnj = 240, nom = "Maréchal Dughan", carte = 1429, x = 42.1, y = 65.9 } } }
+c = ns.calculer({ { nom = "Léo", niveau = 5, quetes = { [KOBOLDS] = kobolds(false) } },
+  { nom = "Virgile", niveau = 5, quetes = {} } }, 0, nil, BASE6)
+x = seul(c.aFaire, "prendre", "Virgile", KOBOLDS)
+assert(x.donneur.nom == "Maréchal Dughan" and x.donneur.x == 42.1, "le donneur de la base")
+c = ns.calculer({ { nom = "Léo", niveau = 5, quetes = { [KOBOLDS] = kobolds(false) } },
+  { nom = "Mira", niveau = 5, quetes = { [KOBOLDS] = aPrendre({ nom = "Gryan Stoutmantle", carte = 1436, x = 56, y = 47 }) } },
+  { nom = "Virgile", niveau = 5, quetes = {} } }, 0, nil, BASE6)
+x = seul(c.aFaire, "prendre", "Virgile", KOBOLDS)
+assert(x.donneur.nom == "Gryan Stoutmantle" and x.donneur.carte == 1436, "le relevé de Mira passe devant la base")
+-- Résorbé : prise, ou déjà rendue ; écartée : « Abandonner aussi » chez qui l'a, rien à prendre ; quête d'avant : rien.
+c = ns.calculer({ { nom = "Léo", niveau = 5, quetes = { [KOBOLDS] = aPrendre(DUGHAN) } },
+  { nom = "Virgile", niveau = 5, quetes = { [KOBOLDS] = kobolds() } } })
+assert(#c.aFaire == 0, "prise : l'écart n'apparaît plus")
+c = ns.calculer({ { nom = "Léo", niveau = 5, quetes = { [KOBOLDS] = aPrendre(DUGHAN) } },
+  { nom = "Virgile", niveau = 5, quetes = {}, renduesAvant = { [KOBOLDS] = true } } })
+assert(#c.aFaire == 0, "déjà rendue : rien à prendre")
+c = ns.calculer({ { nom = "Léo", niveau = 5, quetes = { [KOBOLDS] = aPrendre(DUGHAN) } }, { nom = "Virgile", niveau = 5, quetes = {} } },
+  0, { [KOBOLDS] = { ecartee = true, date = 1, par = "Virgile" } })
+seul(c.aFaire, "ecartee", "Léo", KOBOLDS)
+c = ns.calculer({ { nom = "Léo", niveau = 5, quetes = { [KOBOLDS] = aPrendre(DUGHAN) }, avant = { [KOBOLDS] = true } },
+  { nom = "Virgile", niveau = 5, quetes = {} } })
+assert(#c.aFaire == 0, "quête d'avant de Léo : aucun écart")
+-- Quête lancée par un objet (base : objet de départ) : l'écart nomme l'objet et l'endroit où un membre l'a ramassé
+-- (son origine relevée : une position, sans PNJ) ; sans ramassage connu, l'origine donnée par la base des quêtes.
+local COLLECTEUR = 123
+local BASEO = { [COLLECTEUR] = { objet = 1307, origine = { nom = "Plan de route du Collecteur", pnjs = { "Rivepatte chétif" } } } }
+c = ns.calculer({ { nom = "Léo", niveau = 5, quetes = { [COLLECTEUR] = aPrendre({ carte = 1436, x = 30, y = 40 }) } },
+  { nom = "Virgile", niveau = 5, quetes = {} } }, 0, nil, BASEO)
+x = seul(c.aFaire, "prendre", "Virgile", COLLECTEUR)
+assert(x.donneur == nil and x.objet.id == 1307 and x.objet.nom == "Plan de route du Collecteur", "l'objet, nommé")
+assert(x.objet.ramasse.carte == 1436 and x.objet.ramasse.x == 30 and x.objet.ramasse.y == 40, "où Léo l'a ramassé")
+c = ns.calculer({ { nom = "Léo", niveau = 5, quetes = { [COLLECTEUR] = kobolds(false) } },
+  { nom = "Virgile", niveau = 5, quetes = {} } }, 0, nil, BASEO)
+x = seul(c.aFaire, "prendre", "Virgile", COLLECTEUR)
+assert(x.objet.ramasse == nil and x.objet.pnjs[1] == "Rivepatte chétif", "sans ramassage : lâché par les Rivepatte")
+-- Ni relevé ni base : l'écart existe quand même, sans endroit.
+c = ns.calculer({ { nom = "Léo", niveau = 5, quetes = { [KOBOLDS] = kobolds(false) } }, { nom = "Virgile", niveau = 5, quetes = {} } })
+x = seul(c.aFaire, "prendre", "Virgile", KOBOLDS)
+assert(x.donneur == nil and x.objet == nil, "sans endroit")
 -- Résorbé : tous l'ont, ou l'ont déjà rendue ; l'écart n'apparaît plus.
 c = ns.calculer({ { nom = "Virgile", niveau = 5, quetes = { [KOBOLDS] = kobolds(true) } },
   { nom = "Léo", niveau = 5, quetes = { [KOBOLDS] = kobolds() } } })
@@ -684,7 +738,7 @@ assert(ns.decoder(ns.encoder(avecTexte)).quetes[7].objectifs[1].fait == 2, "les 
 
 -- Les champs ajoutés après le 10e, vides : APRES_ZONE, ceux après la zone de la Compagnie (#27 : les prérequis
 -- manquants) ; FIN, tous (#24 : la zone, puis APRES_ZONE). Un état à 10 champs + FIN est complet.
-local APRES_ZONE = "##" -- #27 : les prérequis manquants ; #23 : la liste des membres
+local APRES_ZONE = "###" -- #27 : les prérequis manquants ; #23 : la liste des membres ; #6 : les origines
 local FIN = "#" .. APRES_ZONE
 -- Lecture stricte : un champ mal formé, et tout l'état est rejeté (jamais exécuté ni interprété). Un seul format (bêta) :
 -- un état à quatre champs (celui de #13, sans abandons) est rejeté aussi.
@@ -792,6 +846,18 @@ for i = 1, 5 do plein.liste.membres[i] = { guid = "Player-4395-0A1B2C3" .. i, no
 local idC = "Player-4395-0A1B2C3D-1764000000"
 local parts = ns.morceaux(idC, ns.encoder(plein), 99)
 assert(#parts >= 1 and #parts <= 10, "le pire cas réaliste tient : " .. #parts .. " morceaux, " .. #ns.encoder(plein) .. " octets")
+-- Les origines (#6) remplissent la place qui reste : toutes les quêtes non partageables, relevées avec un PNJ au nom
+-- long, le pire cas tient toujours, avec les premières origines.
+local avecToutes = {}
+for k, v in pairs(plein) do avecToutes[k] = v end
+avecToutes.quetes = {}
+for id, q in pairs(plein.quetes) do
+  avecToutes.quetes[id] = { finie = q.finie, zone = q.zone, objectifs = q.objectifs, partageable = false,
+    origine = { nom = "Grand Géomètre Fizzledowser", carte = 1429, x = 42, y = 65 } }
+end
+local n = #ns.morceaux(idC, ns.encoder(avecToutes), 99)
+local recu = assert(ns.decoder(ns.encoder(avecToutes)), "le pire cas avec origines se décode")
+assert(n >= 1 and n <= 10 and recu.quetes[90001].origine, "le pire cas avec origines tient : " .. n .. " morceaux, la 1re origine part")
 print(("Compagnie : pire cas réaliste, %d octets, %d morceaux sur 10"):format(#ns.encoder(plein), #parts))
 
 -- Écarter, Remettre (#21) : une décision datée de la Compagnie. Les décisions reçues avec un état : la plus récente
@@ -837,14 +903,14 @@ assert(ns.decoder("12#########148:" .. (100000 + 86401) .. ":Léo" .. APRES_ZONE
 local avecPrerequis = { niveau = 12, quetes = {}, rendues = {}, ecartees = {}, avant = {}, renduesAvant = {},
   prerequis = { zone = 148, manquants = { { quete = 952, prerequis = 940 }, { quete = 2050, prerequis = 2052 } } } }
 corps = ns.encoder(avecPrerequis)
-assert(corps:find("##148=952:940,2050:2052#$"), "les prérequis, en 12e champ : " .. corps)
+assert(corps:find("##148=952:940,2050:2052##$"), "les prérequis, en 12e champ : " .. corps)
 assert(pareil(ns.decoder(corps), avecPrerequis), "avec les prérequis : identique (" .. corps .. ")")
 avecPrerequis.prerequis.manquants = {}
 corps = ns.encoder(avecPrerequis)
-assert(corps:find("##148#$") and pareil(ns.decoder(corps), avecPrerequis), "rien ne manque, la zone couverte : " .. corps)
+assert(corps:find("##148##$") and pareil(ns.decoder(corps), avecPrerequis), "rien ne manque, la zone couverte : " .. corps)
 for _, f in ipairs({ "x", "0", "148=", "148=952", "148=952:", "148=a:940", "148=952:940,", "148:952:940", "=952:940",
   "148=" .. ("1:2,"):rep(8) .. "1:2" }) do
-  assert(ns.decoder("12##########" .. f .. "#") == nil, "prérequis rejetés : " .. f)
+  assert(ns.decoder("12##########" .. f .. "##") == nil, "prérequis rejetés : " .. f)
 end
 -- Au-delà de MAX_PREREQUIS (8), les premiers seuls partent.
 for i = 1, 12 do avecPrerequis.prerequis.manquants[i] = { quete = 3000 + i, prerequis = 4000 + i } end
@@ -869,9 +935,33 @@ assert(pareil(ns.decoder(corps), avecFoyer), "avec foyer : identique")
 for _, f in ipairs({ "a|b#1#1", ("x"):rep(49) .. "#1#1", "a;b##", "Or#x#", "Or#0#", "Or##-1", "Or##2147483648", "Or#1.5#" }) do
   assert(ns.decoder("12#####" .. f .. "##" .. FIN) == nil, "foyer rejeté : " .. f:sub(1, 20))
 end
--- « partageable » (lu dans mon journal) ne part pas.
+-- « partageable » (lu dans mon journal) ne part pas ; « non partageable » si (#6, ci-dessous).
 assert(ns.encoder({ niveau = 2, quetes = { [7] = { finie = false, objectifs = {}, partageable = true } } }) == "2#7:0########" .. FIN,
   "partageable ne part pas")
+
+-- Quête à prendre soi-même (#6) : « non partageable » part avec la quête (« n », après « p »), et en 14e champ l'origine que j'ai relevée : le PNJ et ma position quand je l'ai acceptée, ou ma position
+-- quand j'ai ramassé l'objet qui la lance (« id=PNJ@carte:x:y », x et y en % entiers) → identique.
+local avecOrigines = { niveau = 12, rendues = {}, ecartees = {}, avant = {}, renduesAvant = {}, quetes = {
+  [7] = { finie = false, objectifs = {}, partageable = false, origine = { nom = "Maréchal Dughan", carte = 1429, x = 42, y = 65 } },
+  [8] = { finie = true, objectifs = {}, partageable = false, origine = { carte = 1436, x = 0, y = 100 } }, -- un objet ramassé
+  [9] = { finie = false, objectifs = {}, partageable = false, origine = { nom = "Gryan Stoutmantle" } }, -- sans carte (instance)
+  [10] = { finie = false, objectifs = {}, partageable = false }, -- rien de relevé
+} }
+corps = ns.encoder(avecOrigines)
+assert(corps:find("^12#7:0n;8:1n;9:0n;10:0n#"), "non partageable : n — " .. corps)
+assert(corps:find("#7=Maréchal Dughan@1429:42:65;8@1436:0:100;9=Gryan Stoutmantle$"), "les origines, en 14e champ : " .. corps)
+assert(pareil(ns.decoder(corps), avecOrigines), "avec les origines : identique (" .. corps .. ")")
+-- L'origine d'une quête partageable ne part pas.
+assert(ns.encoder({ niveau = 2, quetes = { [7] = { finie = false, objectifs = {}, partageable = true, origine = { nom = "Dughan" } } } })
+  == "2#7:0########" .. FIN, "partageable : pas d'origine")
+-- Mal formé : tout l'état est rejeté (une origine d'une quête absente de l'état, partageable, ou deux fois ; ni PNJ ni
+-- position ; un nom comme une zone, sans « @ » ; une position entière, x et y de 0 à 100).
+for _, f in ipairs({ "8=Dughan", "6=Dughan", "7=Dughan;7=Dughan", "7", "7=", "7@", "7=@1:2:3", "7Dughan", "7=a|b", "7=a@b@1:2:3",
+  "7@1:2", "7@1:2:3:4", "7@0:2:3", "7@1:101:3", "7@1:2:-3", "7@x:2:3", "7=" .. ("x"):rep(49), "7=Dughan;" }) do
+  assert(ns.decoder("12#6:0;7:0n############" .. f) == nil, "origine rejetée : " .. f:sub(1, 20))
+end
+assert(ns.decoder("12#6:0;7:0n############7=Dughan@1:2:3"), "bien formée : acceptée")
+for _, q in ipairs({ "7:0x", "7:0nn", "7:0np", "7:n", "7:2" }) do assert(ns.decoder("12#" .. q .. "########" .. FIN) == nil, "drapeau rejeté : " .. q) end
 
 -- La zone de chaque quête (#13 : l'en-tête de zone de mon journal) part avec l'état : encodage puis décodage → identique.
 local avecZones = { niveau = 35, rendues = { [1453] = true }, ecartees = {}, avant = {}, renduesAvant = {}, quetes = {
@@ -1084,12 +1174,12 @@ assert(#partis == 4, "sans Compagnie : rien")
 local avecListe = { niveau = 12, quetes = {}, rendues = {}, ecartees = {}, avant = {}, renduesAvant = {},
   liste = { date = 1764000000, membres = { { guid = "Player-4395-0A1B2C3D", nom = "Virgile Marteau" }, { guid = "Player-4395-0A1B2C3E", nom = "Léo Lame" } } } }
 corps = ns.encoder(avecListe)
-assert(corps:find("#1764000000=4395%-0A1B2C3D:Virgile Marteau,4395%-0A1B2C3E:Léo Lame$"), "la liste, en 13e champ : " .. corps)
+assert(corps:find("#1764000000=4395%-0A1B2C3D:Virgile Marteau,4395%-0A1B2C3E:Léo Lame#$"), "la liste, en 13e champ : " .. corps)
 assert(pareil(ns.decoder(corps), avecListe), "avec la liste : identique (" .. corps .. ")")
 for _, f in ipairs({ "x", "1764000000", "1764000000=", "1764000000=1-A:Léo", "1764000000=1-A:Léo,1-A:Mira", "1764000000=1-A:,1-B:Mira",
   "1764000000=1-A:L|o,1-B:Mira", "1764000000=Player-1-A:Léo,1-B:Mira", "=1-A:Léo,1-B:Mira",
   "1764000000=1-A:A,1-B:B,1-C:C,1-D:D,1-E:E,1-F:F" }) do
-  assert(ns.decoder("12############" .. f) == nil, "liste rejetée : " .. f)
+  assert(ns.decoder("12############" .. f .. "#") == nil, "liste rejetée : " .. f)
 end
 
 -- Inviter (#23) : Virgile et Léo sont une Compagnie, Mira est dans le groupe. Virgile invite Mira : proposition ;

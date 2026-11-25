@@ -162,10 +162,16 @@ function monEtat()
       end
       local finie = C_QuestLog.IsComplete(id)
       if type(finie) ~= "boolean" then finie = toutFini end
-      quetes[id] = { finie = finie, objectifs = objectifs, zone = zone, partageable = C_QuestLog.IsPushableQuest(id) == true,
-        personnelle = e.db.personnelles and e.db.personnelles[id] } -- marquée personnelle à la main (#7)
+      local partageable = C_QuestLog.IsPushableQuest(id) == true
+      quetes[id] = { finie = finie, objectifs = objectifs, zone = zone, partageable = partageable,
+        personnelle = e.db.personnelles and e.db.personnelles[id], -- marquée personnelle à la main (#7)
+        -- Où je l'ai prise (#6), pour qui doit aller la chercher : pas pour une quête d'avant (aucun écart).
+        origine = not partageable and not (e.db.avant and e.db.avant[id]) and e.db.origines and e.db.origines[id] or nil }
       titres[id] = info.title
     end
+  end
+  for id in pairs(e.db.origines or {}) do -- rendue : son origine ne sert plus (#6)
+    if not quetes[id] and C_QuestLog.IsQuestFlaggedCompleted(id) then e.db.origines[id] = nil end
   end
   -- Rendues : parmi les quêtes des autres membres, celles que j'ai déjà rendues (pas tout l'historique : il ne tient
   -- pas dans un message). Une remise que l'add-on n'a pas vue depuis mon entrée (#20) est d'avant : elle ne fait pas de
@@ -388,6 +394,12 @@ end
 -- de la base : une ligne dans le chat propose « /compagnie zone », une fois par zone et par session ; rien ne change seul.
 -- Indépendante du filtre d'affichage par zone (#13), qui reste personnel.
 local function nomZone(z) return C_Map.GetAreaInfo(z) or ("Zone " .. z) end
+-- Une carte (uiMapID) et un endroit dessus (#6) : « , Forêt d'Elwynn (42, 65) », vide sans carte.
+local function nomCarte(c) local i = C_Map.GetMapInfo(c) return i and i.name or ("carte " .. c) end
+local function lieu(o)
+  if not (o and o.carte) then return "" end
+  return ", " .. nomCarte(o.carte) .. (o.x and o.y and (" (%d, %d)"):format(math.floor(o.x + 0.5), math.floor(o.y + 0.5)) or "")
+end
 local function choisirZone(z)
   e.db.zoneCompagnie = { zone = z, date = math.floor(GetServerTime()), par = prenom(moi()) }
   jeu.dire(("Tu as choisi %s pour la Compagnie."):format(nomZone(z)))
@@ -619,7 +631,7 @@ local function remplirAFaire(l, ecarts, unites)
         if bouton == "RightButton" and self.ecartable then menuEcarter(self, self.ecartable) end
       end)
       b:SetScript("OnClick", function(self)
-        if self.x.type == "avance" or self.x.type == "foyer" or self.x.type == "prerequis" or self.x.type == "niveau" then return end
+        if self.x.type ~= "ecartee" and self.x.type ~= "partager" then return end
         if self.x.type == "ecartee" then
           local p = StaticPopup_Show("COMPAGNIE_ABANDON", titre(self.x.quete))
           if p then p.data = self.x.quete end
@@ -634,7 +646,7 @@ local function remplirAFaire(l, ecarts, unites)
       end)
       l.boutons[i] = b
     end
-    b.x, b.ecartable, b.details = x, (x.type == "avance" or x.type == "prerequis" or x.type == "niveau") and x.quete or nil, nil
+    b.x, b.ecartable, b.details = x, (x.type == "avance" or x.type == "prerequis" or x.type == "niveau" or x.type == "prendre") and x.quete or nil, nil
     if x.type == "prerequis" then
       local n = #x.chaine
       local quetes = n == 1 and "1 quête" or n .. " quêtes"
@@ -653,6 +665,22 @@ local function remplirAFaire(l, ecarts, unites)
     elseif x.type == "niveau" then
       b:SetText(("Au niveau %d : %s"):format(x.niveau, titre(x.quete))) -- comme « Partager : … » ; la phrase, dans la bulle
       b.details = ("« %s » : au niveau %d pour toute la Compagnie."):format(titre(x.quete), x.niveau)
+      b:Disable()
+    elseif x.type == "prendre" then
+      local o = x.objet
+      if x.donneur and x.donneur.nom then
+        b:SetText("Va voir " .. x.donneur.nom .. (x.donneur.carte and ", " .. nomCarte(x.donneur.carte) or ""))
+        b.details = ("« %s » ne se partage pas : va voir %s%s."):format(titre(x.quete), x.donneur.nom, lieu(x.donneur))
+      elseif o then
+        local nom = o.nom and "« " .. o.nom .. " »" or "l'objet qui la lance"
+        b:SetText("Trouve " .. (o.nom or "l'objet de " .. titre(x.quete)))
+        b.details = ("« %s » part d'un objet, %s%s."):format(titre(x.quete), nom,
+          o.ramasse and " : un membre l'a ramassé" .. lieu(o.ramasse)
+          or o.pnjs and " : lâché par " .. table.concat(o.pnjs, ", ") or o.objets and " : trouvé dans " .. table.concat(o.objets, ", ") or "")
+      else
+        b:SetText("À prendre soi-même : " .. titre(x.quete))
+        b.details = ("« %s » ne se partage pas : chacun va la prendre."):format(titre(x.quete))
+      end
       b:Disable()
     elseif x.type == "foyer" then
       local voyelle = x.auberge:find("^[AEIOUYaeiouy]") or x.auberge:sub(1, 2) == "É"
@@ -1288,13 +1316,43 @@ local function partageRefuse(texte)
   end
 end
 
+-- Quête à prendre soi-même (#6) : où j'ai pris une quête, pour qui devra aller la chercher (envoyé avec mon état s'il
+-- elle ne se partage pas). Ma position : uiMapID, x et y en % entiers ; {} sans carte (instance).
+local function ici()
+  local carte = C_Map.GetBestMapForUnit("player")
+  local p = carte and C_Map.GetPlayerMapPosition(carte, "player")
+  local x, y
+  if p then x, y = p:GetXY() end
+  if not (x and y) then return {} end
+  return { carte = carte, x = math.floor(x * 100 + 0.5), y = math.floor(y * 100 + 0.5) }
+end
+local fenetreQuete -- { id, origine } : la fenêtre de quête ouverte (QUEST_DETAIL), notée si je l'accepte
+local function noterOrigine(id, o)
+  e.db.origines = e.db.origines or {}
+  e.db.origines[id] = o
+end
+-- Le PNJ à l'acceptation, ou rien pour une quête lancée par un objet (la base dit lequel) : l'origine est alors l'endroit
+-- où je l'ai ramassé. ponytail: le ramassage d'un membre de mon groupe compte aussi (le message de butin ne se lit pas
+-- sans la langue du client) : l'endroit est le même, à quelques pas.
+local function ramasse(message)
+  local item = tonumber(message:match("|Hitem:(%d+)"))
+  if not item then return end
+  for id, q in pairs(base()) do
+    if q.objet == item and not (e.db.origines and e.db.origines[id]) then
+      local o = ici()
+      if o.carte then noterOrigine(id, o) end
+      return
+    end
+  end
+end
+
 local MONJOURNAL = { QUEST_LOG_UPDATE = true, QUEST_TURNED_IN = true, PLAYER_LEVEL_UP = true, UNIT_QUEST_LOG_CHANGED = true,
   BAG_UPDATE_COOLDOWN = true, HEARTHSTONE_BOUND = true }
 local cadre = CreateFrame("Frame", "CompagnieMessages")
 for _, ev in ipairs({ "ADDON_LOADED", "PLAYER_ENTERING_WORLD", "CHAT_MSG_ADDON", "GROUP_ROSTER_UPDATE", "QUEST_LOG_UPDATE",
   "QUEST_ACCEPTED", "QUEST_TURNED_IN", "PLAYER_LEVEL_UP", "UNIT_QUEST_LOG_CHANGED", "PLAYER_REGEN_ENABLED", "ZONE_CHANGED_NEW_AREA",
   "QUEST_PROGRESS", "QUEST_COMPLETE", "QUEST_DETAIL", "QUEST_GREETING", "QUEST_FINISHED", "BAG_UPDATE_COOLDOWN",
-  "HEARTHSTONE_BOUND", "QUEST_ACCEPT_CONFIRM", "CHAT_MSG_SYSTEM" }) do cadre:RegisterEvent(ev) end
+  "HEARTHSTONE_BOUND", "QUEST_ACCEPT_CONFIRM", "CHAT_MSG_SYSTEM", "CHAT_MSG_LOOT" }) do cadre:RegisterEvent(ev) end
 cadre:SetScript("OnEvent", function(_, ev, a1, texte, canal, expediteur)
   if ev == "ADDON_LOADED" then
     if a1 == "Compagnie" then
@@ -1323,7 +1381,14 @@ cadre:SetScript("OnEvent", function(_, ev, a1, texte, canal, expediteur)
   elseif ev == "QUEST_DETAIL" or ev == "QUEST_GREETING" or ev == "QUEST_FINISHED" then
     remise = nil
     majBandeau()
-    if ev == "QUEST_DETAIL" then accepterQuete() end
+    if ev == "QUEST_DETAIL" then
+      local o = ici()
+      o.nom = UnitExists("npc") and UnitName("npc") or nil
+      fenetreQuete = { id = GetQuestID(), origine = o }
+      accepterQuete()
+    end
+  elseif ev == "CHAT_MSG_LOOT" then
+    if type(a1) == "string" then ramasse(a1) end
   elseif ev == "CHAT_MSG_SYSTEM" then
     if e.db.compagnie and type(a1) == "string" then partageRefuse(a1) end
   elseif ev == "QUEST_ACCEPT_CONFIRM" then
@@ -1332,6 +1397,8 @@ cadre:SetScript("OnEvent", function(_, ev, a1, texte, canal, expediteur)
     -- Forever : (questID) ; d'autres clients Classic : (index, questID).
     local id = type(texte) == "number" and texte or a1
     if e.db.avant and id then e.db.avant[id] = nil end -- reprise après l'entrée : une quête de la Compagnie
+    local f = fenetreQuete
+    if f and f.id == id and f.origine.nom and not (base()[id] or {}).objet then noterOrigine(id, f.origine) end
     -- Reprendre une quête que j'avais écartée, c'est la remettre (#21) : datée et annoncée.
     local d = id and e.db.compagnie and e.db.ecartees and e.db.ecartees[id]
     if d and d.ecartee and d.par == prenom(moi()) then decider(id, false) end

@@ -48,7 +48,7 @@ _Avoid_: ancienne quête, quête héritée
 Écart où un membre a une quête que d'autres n'ont pas, et que le jeu permet de partager.
 
 **Quête à prendre soi-même**:
-Écart où un membre a une quête que d'autres n'ont pas, et que le jeu ne permet pas de partager (lancée par un objet, ou le PNJ remet un objet) : chacun doit aller la chercher.
+Écart où un membre a une quête que d'autres n'ont pas, et que le jeu ne permet pas de partager (lancée par un objet, ou le PNJ remet un objet) : chacun doit aller la chercher. L'écart dit où : « Va voir Maréchal Dughan » avec l'endroit (le PNJ et la position relevés par le membre qui l'a acceptée, sinon le donneur de la base des quêtes), ou l'objet à trouver avec l'endroit où un membre l'a ramassé (sinon d'où il vient d'après la base : « lâché par les kobolds ») ; sans rien de connu, l'écart existe quand même, sans endroit. Une quête personnelle ou de niveau insuffisant n'en fait pas.
 _Avoid_: quête non partageable
 
 **Quête écartée**:

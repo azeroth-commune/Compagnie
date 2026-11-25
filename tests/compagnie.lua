@@ -3,11 +3,12 @@
 -- retenus, ceux de Léo arrivent par l'événement CHAT_MSG_ADDON du cadre CompagnieMessages.
 local LEO, MIRA = "Player-1-0000ABCD", "Player-1-0000BCDE"
 -- Les champs d'un état ajoutés après le 10e, vides : APRES_ZONE, ceux après la zone de la Compagnie (#27 : mes
--- prérequis manquants ; #23 : la liste des membres) ; FIN, tous (#24 : la zone, puis APRES_ZONE).
-local APRES_ZONE = "##"
+-- prérequis manquants ; #23 : la liste des membres ; #6 : les origines) ; FIN, tous (#24 : la zone, puis APRES_ZONE).
+local APRES_ZONE = "###"
 local FIN = "#" .. APRES_ZONE
--- La fin de mon état, tel qu'il part dans une Compagnie (motif) : zone et prérequis vides, puis la liste des membres.
-local MIEN = "###%d+=[^#]+$"
+-- La fin de mon état, tel qu'il part dans une Compagnie (motif) : zone et prérequis vides, la liste des membres, puis
+-- les origines (#6), vides.
+local MIEN = "###%d+=[^#]+#$"
 
 local function moi() return { guid = UnitGUID("player"), nom = AzerothCommune.Personnage().nom } end
 
@@ -486,7 +487,7 @@ test("une demande d'état reçoit le mien : au groupe du jeu, ou chuchoté hors 
             local m = envoyes[#envoyes]
             assertEquals("WHISPER", m.canal)
             assertEquals("Léo Lame", m.cible)
-            assertTrue(m.texte:find("^E;essai;%d+/1/1;%d+[%d:]*#1001:0:3/8##Forêt d'Elwynn=1001##[^#]*#%d*#%d*##" .. MIEN) ~= nil, m.texte)
+            assertTrue(m.texte:find("^E;essai;%d+/1/1;%d+[%d:]*#1001:0n:3/8##Forêt d'Elwynn=1001##[^#]*#%d*#%d*##" .. MIEN) ~= nil, m.texte)
         end)
         avecLeo(function(envoyes)
             recu("D;essai")
@@ -584,7 +585,7 @@ test("les envois d'une rafale d'événements sont regroupés en un seul message"
             ecouler(5)
             assertEquals(n + 1, #envoyes, "un seul message")
             assertEquals("PARTY", envoyes[#envoyes].canal)
-            assertTrue(envoyes[#envoyes].texte:find("#1001:0:2/8#", 1, true) ~= nil, envoyes[#envoyes].texte)
+            assertTrue(envoyes[#envoyes].texte:find("#1001:0n:2/8#", 1, true) ~= nil, envoyes[#envoyes].texte)
         end)
     end)
     eteindre()
@@ -1360,7 +1361,7 @@ test("zone de la Compagnie (#24) : le menu, une zone grisée sous le niveau ; ch
                     assertEquals("Zone : Bois de la Pénombre (Léo à contrôler)", CompagnieZoneBouton:GetText())
                     -- Léo choisit la Marche de l'Ouest après moi : le chat le dit, le suivi suit.
                     t = dits(function()
-                        chuchote("E;essai;1/1/1;10#1001:0#########40:" .. math.floor(GetServerTime() + 60) .. ":Léo#40#")
+                        chuchote("E;essai;1/1/1;10#1001:0#########40:" .. math.floor(GetServerTime() + 60) .. ":Léo#40##")
                     end)
                     assertTrue(contient(t, "Léo a choisi Marche de l'Ouest pour la Compagnie."), t)
                     assertEquals("Zone : Marche de l'Ouest", CompagnieZoneBouton:GetText(), "Léo l'a contrôlée : rien à contrôler")
@@ -1459,7 +1460,7 @@ test("Inviter (#23) : se dessine pour un joueur du groupe non membre ; l'invitat
             assertEquals(3, #lignes(), "Mira est membre")
             -- Mon état porte la nouvelle liste (pour les absents, et pour qu'elle entre chez elle).
             ecouler(5)
-            assertTrue(envoyes[#envoyes].texte:find("Mira Feuille$") ~= nil, envoyes[#envoyes].texte)
+            assertTrue(envoyes[#envoyes].texte:find("Mira Feuille#$") ~= nil, envoyes[#envoyes].texte)
             CompagnieFrame:Hide()
         end)
     end)
@@ -1477,7 +1478,7 @@ test("Inviter (#23) : se dessine pour un joueur du groupe non membre ; l'invitat
             local g = moi().guid:gsub("^Player%-", "")
             local t = dits(function()
                 recu("E;c1;1/1/1;10############" .. math.floor(GetServerTime()) .. "=" .. LEO:gsub("^Player%-", "") ..
-                    ":Léo Lame,1-0000BCDE:Mira Feuille," .. g .. ":" .. moi().nom)
+                    ":Léo Lame,1-0000BCDE:Mira Feuille," .. g .. ":" .. moi().nom .. "#")
             end)
             assertTrue(contient(t, "Tu entres dans la Compagnie : Léo Lame"), t)
             assertEquals("c1", CompagnieDB.compagnie.id)
@@ -1556,4 +1557,77 @@ test("quête personnelle et niveau insuffisant (#7) : à part et nommée, marqu�
     end)
     CompagnieDB.personnelles, CompagnieDB.niveauxRequis = nil, nil
     eteindre()
+end)
+
+---------------------------------------------------------------------------------------------------
+-- Quête à prendre soi-même (#6).
+
+test("quête à prendre soi-même (#6) : « Va voir » le PNJ relevé par Léo ; l'objet, où il a été ramassé, sinon d'où il vient ; ma prise part avec mon état", function()
+    local BASE = { [2600] = { nom = "Les Kobolds" }, [2602] = { nom = "La lettre" },
+        [2601] = { nom = "Le collecteur", objet = 1307, origine = { nom = "Plan de route du Collecteur", pnjs = { "Rivepatte chétif", "Lardeur" } } } }
+    local CARTES = { [1429] = { name = "Forêt d'Elwynn" }, [1436] = { name = "Marche de l'Ouest" } }
+    local g = { carte = C_Map.GetBestMapForUnit, pos = C_Map.GetPlayerMapPosition, info = C_Map.GetMapInfo, existe = UnitExists,
+        nom = UnitName, qid = GetQuestID }
+    C_Map.GetBestMapForUnit = function() return 1436 end
+    C_Map.GetPlayerMapPosition = function() return { GetXY = function() return 0.561, 0.474 end } end
+    C_Map.GetMapInfo = function(c) return CARTES[c] end
+    UnitExists = function(u) if u == "npc" then return true end return g.existe(u) end
+    UnitName = function(u) if u == "npc" then return "Gryan Stoutmantle" end return g.nom(u) end
+    GetQuestID = function() return 2602 end
+    local ok, err = pcall(function()
+        avecBase(BASE, function()
+            avecJournal({}, function()
+                fabriquer({ guid = LEO, nom = "Léo Lame" })
+                CompagnieDB.modeCompagnie, CompagnieDB.accepteAuto, CompagnieDB.origines = nil, false, nil
+                local function etatDeLeo(ramasse)
+                    CompagnieDB.etats = { [LEO] = { niveau = 5, rendues = {}, quetes = {
+                        [2600] = { finie = false, objectifs = {}, partageable = false, origine = { nom = "Maréchal Dughan", carte = 1429, x = 42, y = 65 } },
+                        [2601] = { finie = false, objectifs = {}, partageable = false, origine = ramasse },
+                        [2602] = { finie = false, objectifs = {}, partageable = false } } } }
+                end
+                etatDeLeo({ carte = 1436, x = 30, y = 40 })
+                avecGroupe({}, false, function()
+                    charger()
+                    local b = assert(bouton("CompagnieSuiviAFaire1"), "un écart À faire")
+                    assertEquals("Va voir Maréchal Dughan, Forêt d'Elwynn", b:GetText())
+                    assertTrue(not b:IsEnabled(), "rien à cliquer : il faut y aller")
+                    assertEquals("« Les Kobolds » ne se partage pas : va voir Maréchal Dughan, Forêt d'Elwynn (42, 65).", b.details)
+                    b = bouton("CompagnieSuiviAFaire2")
+                    assertEquals("Trouve Plan de route du Collecteur", b:GetText())
+                    assertEquals("« Le collecteur » part d'un objet, « Plan de route du Collecteur » : un membre l'a ramassé, " ..
+                        "Marche de l'Ouest (30, 40).", b.details)
+                    assertEquals("À prendre soi-même : La lettre", bouton("CompagnieSuiviAFaire3"):GetText(), "ni relevé ni base : sans endroit")
+                    -- Sans ramassage connu : d'où vient l'objet, d'après la base des quêtes.
+                    etatDeLeo(nil)
+                    evenement("GROUP_ROSTER_UPDATE")
+                    assertEquals("« Le collecteur » part d'un objet, « Plan de route du Collecteur » : lâché par Rivepatte chétif, Lardeur.",
+                        bouton("CompagnieSuiviAFaire2").details)
+                    -- Je ramasse le plan : l'endroit est noté pour quand je prendrai la quête.
+                    evenement("CHAT_MSG_LOOT", "Vous recevez le butin : |cffffffff|Hitem:1307::::::::5:::::|h[Plan de route du Collecteur]|h|r.")
+                    local o = CompagnieDB.origines and CompagnieDB.origines[2601]
+                    assertEquals("1436 56 47 nil", o and ("%s %s %s %s"):format(o.carte, o.x, o.y, tostring(o.nom)), "le ramassage, sans PNJ")
+                end)
+                -- Je prends La lettre chez Gryan Stoutmantle : l'écart est résorbé, mon état porte le PNJ et l'endroit.
+                evenement("QUEST_DETAIL")
+                evenement("QUEST_ACCEPTED", 2602)
+                avecJournal({ { id = 2602, titre = "La lettre", partageable = false } }, function()
+                    avecLeo(function(envoyes)
+                        evenement("QUEST_LOG_UPDATE")
+                        ecouler(5)
+                        local t = envoyes[#envoyes].texte
+                        assertTrue(t:find("2602:0n", 1, true) ~= nil, "non partageable : " .. t)
+                        assertTrue(t:find("#2602=Gryan Stoutmantle@1436:56:47$") ~= nil, "le PNJ et l'endroit : " .. t)
+                        assertEquals("Va voir Maréchal Dughan, Forêt d'Elwynn", bouton("CompagnieSuiviAFaire1"):GetText())
+                        assertEquals("Trouve Plan de route du Collecteur", bouton("CompagnieSuiviAFaire2"):GetText())
+                        assertNil(bouton("CompagnieSuiviAFaire3"), "La lettre : prise")
+                    end)
+                end)
+            end)
+        end)
+    end)
+    C_Map.GetBestMapForUnit, C_Map.GetPlayerMapPosition, C_Map.GetMapInfo = g.carte, g.pos, g.info
+    UnitExists, UnitName, GetQuestID = g.existe, g.nom, g.qid
+    CompagnieDB.accepteAuto, CompagnieDB.origines = nil, nil
+    eteindre()
+    if not ok then error(err, 0) end
 end)
