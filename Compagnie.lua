@@ -3,8 +3,8 @@
 -- le jeu donne et ce qu'il affiche.
 -- Présent : un membre connecté dans mon groupe du jeu (donné par le serveur : GUID, UnitIsConnected), ou hors du groupe
 -- un membre qui nous a écrit par chuchotement depuis moins de 2 min ; sinon absent. Rien n'est deviné.
--- Messages des membres (fonder, quitter, retirer) : au groupe du jeu seulement, donc ils n'atteignent que les présents.
--- ponytail: un absent ne l'apprend pas à son retour ; l'état pourra porter la liste des membres.
+-- Messages des membres (fonder, inviter, quitter, retirer) : au groupe du jeu seulement, donc ils n'atteignent que les
+-- présents ; la liste des membres part aussi avec l'état (#23) : un absent apprend la plus récente à son retour.
 -- États (Etats.lua) : au groupe du jeu quand un membre y est, en chuchotement d'add-on aux membres connectés hors du
 -- groupe. Connecté : il nous a écrit par chuchotement. À la connexion, une demande d'état est chuchotée une fois à chaque
 -- membre hors du groupe, puis à chaque membre hors du groupe resté muet une minute (toutes les 30 s au plus) ; pour un
@@ -44,7 +44,10 @@ local jeu = {
     if IsInGroup() then C_ChatInfo.SendAddonMessage(PREFIXE, texte, IsInRaid() and "RAID" or "PARTY") end
   end,
   dire = function(texte) print("|cffa78ffcCompagnie :|r " .. texte) end,
-  proposer = function(p) StaticPopup_Show(p.deja and "COMPAGNIE_DEJA" or "COMPAGNIE_PROPOSITION", p.nom) end,
+  proposer = function(p)
+    StaticPopup_Show(p.deja and "COMPAGNIE_DEJA" or p.invitation and "COMPAGNIE_INVITATION" or "COMPAGNIE_PROPOSITION", p.nom)
+  end,
+  heure = function() return math.floor(GetServerTime()) end, -- la date de la liste des membres (#23)
   maj = function() ns.majCompagnie() end, -- la Compagnie a changé (fondée, quittée, un membre retiré)
   -- J'entre dans la Compagnie (#20) : ce qui est dans mon journal devient mes quêtes d'avant ; seules les remises vues
   -- à partir d'ici comptent pour une quête en avance (CompagnieDB.renduesVues, noté à QUEST_TURNED_IN).
@@ -61,15 +64,19 @@ StaticPopupDialogs.COMPAGNIE_PROPOSITION = {
   OnAccept = function()
     local id = e.proposition and e.proposition.id
     ns.repondre(e, true, jeu)
-    -- le fondateur clôt au plus tard DELAI + 5 s après sa proposition : passé ce temps, plus de F à attendre
+    -- le fondateur clôt au plus tard DELAI + 5 s après sa proposition (l'invitation : l'état de qui invite part 3 s
+    -- après l'acceptation) : passé ce temps, plus rien à attendre
     if id then C_Timer.After(DELAI + 10, function() ns.expirer(e, id, jeu) end) end
   end,
   OnCancel = function() ns.repondre(e, false, jeu) end, -- aussi au bout du délai
   timeout = DELAI, whileDead = true, hideOnEscape = true,
   noCancelOnReuse = true, -- une 2e proposition remplace la 1re : pas de refus envoyé pour la nouvelle
 }
+StaticPopupDialogs.COMPAGNIE_INVITATION = {} -- inviter (#23) : la même réponse que la fondation
+for k, v in pairs(StaticPopupDialogs.COMPAGNIE_PROPOSITION) do StaticPopupDialogs.COMPAGNIE_INVITATION[k] = v end
+StaticPopupDialogs.COMPAGNIE_INVITATION.text = "%s t'invite dans sa Compagnie : vous ferez l'aventure ensemble. En être membre ?"
 StaticPopupDialogs.COMPAGNIE_DEJA = {
-  text = "%s te propose de fonder une Compagnie, mais tu es déjà membre d'une Compagnie : quitte-la pour en rejoindre une autre. Ta réponse est partie : non.",
+  text = "%s te propose une Compagnie, mais tu es déjà membre d'une Compagnie : quitte-la pour en rejoindre une autre. Ta réponse est partie : non.",
   button1 = OKAY or "OK", timeout = DELAI, whileDead = true, hideOnEscape = true,
 }
 
@@ -183,6 +190,7 @@ function monEtat()
     ecartees = e.db.ecartees, -- les décisions de la Compagnie (#21), telles que je les connais
     zoneCompagnie = e.db.zoneCompagnie, -- la zone de la Compagnie (#24), telle que je la connais
     prerequis = mesPrerequis(), -- mes prérequis manquants pour cette zone (#27)
+    liste = e.db.compagnie and { date = e.db.compagnie.date or 0, membres = e.db.compagnie.membres }, -- #23
     auberge = auberge ~= "" and auberge or nil, liaison = f and f.auberge == auberge and f.date or nil,
     finRecharge = reste > 0 and math.ceil((GetServerTime() + reste) / 60) * 60 or nil }
 end
@@ -229,7 +237,7 @@ local function diffuser(texte, tous)
   return ok
 end
 
-local redessiner, annoncer, annoncerZone -- plus bas
+local redessiner, annoncer, annoncerZone, changerListe -- plus bas
 local envoi = {
   programmer = function(delai, fn) C_Timer.After(delai, fn) end,
   monEtat = monEtat,
@@ -244,6 +252,7 @@ local reception = {
   maj = function() redessiner(); ns.signaler(e, false, envoi) end,
   annoncer = function(changees) annoncer(changees) end,
   zone = function(z) annoncerZone(z) end,
+  liste = function(l) changerListe(l) end,
   demande = function() ns.signaler(e, true, envoi) end,
   maintenant = GetTime,
   heure = GetServerTime,
@@ -971,12 +980,32 @@ end
 -- La fenêtre, en deux onglets : Membres (présent ou absent, « Retirer » sur les autres ; « Fonder » ou « Quitter ») et
 -- Écartées (#21 : les quêtes écartées, qui l'a décidé, « Remettre ») ; le mode Compagnie, son état sur son bouton.
 local tableau, vide, boutonFonder, boutonQuitter, boutonMode, tableauEcartees, videEcartees, panneaux
+-- Inviter (#23) : la proposition part au groupe du jeu ; sans réponse au bout du délai, l'invitation tombe.
+local function inviter(guid)
+  local g = groupe()
+  local ok, raison = ns.inviter(e, moi(), g, guid, jeu)
+  if not ok then return jeu.dire(raison) end
+  local nom = g[ns.membre({ membres = g }, guid)].nom
+  jeu.dire("Invitation envoyée à " .. nom .. " : il a une minute pour répondre.")
+  C_Timer.After(DELAI + 5, function()
+    if e.invitations and e.invitations[guid] then
+      e.invitations[guid] = nil
+      jeu.dire(nom .. " n'a pas répondu à l'invitation.")
+      redessiner()
+    end
+  end)
+  redessiner()
+end
 local COLONNES = {
   { key = "nom", title = "Membre", w = 180, get = function(m) return m.nom end },
   { key = "presence", title = "Présence", w = 80, get = function(m) return m.presence end,
     fmt = function(v) return (v == "présent" and "|cff59cc73" or "|cff999999") .. v .. "|r" end },
-  { key = "retirer", w = 80, button = function(m) if m.guid ~= moi() then return "Retirer" end end,
-    click = function(m) ns.retirer(e, moi(), m.guid, jeu) end },
+  -- Retirer un membre ; Inviter un joueur du groupe qui n'est pas membre (#23), « Invité… » en attendant sa réponse.
+  { key = "retirer", w = 80, button = function(m)
+      if m.invitable then return e.invitations and e.invitations[m.guid] and "Invité…" or "Inviter" end
+      if m.guid ~= moi() then return "Retirer" end
+    end,
+    click = function(m) if m.invitable then inviter(m.guid) else ns.retirer(e, moi(), m.guid, jeu) end end },
 }
 local COLONNES_ECARTEES = {
   { key = "titre", title = "Quête écartée", w = 180, get = function(l) return l.titre end },
@@ -989,6 +1018,9 @@ function dessiner()
   presents[moi()] = true
   for i, m in ipairs(c and c.membres or {}) do
     lignes[i] = { guid = m.guid, nom = m.nom, presence = presents[m.guid] and "présent" or "absent" }
+  end
+  for _, p in ipairs(c and #c.membres < ns.MAX and groupe() or {}) do -- les joueurs du groupe à inviter (#23)
+    if not ns.membre(c, p.guid) then lignes[#lignes + 1] = { guid = p.guid, nom = p.nom, presence = "dans le groupe", invitable = true } end
   end
   tableau:SetData(lignes)
   vide:SetShown(not c)
@@ -1073,6 +1105,22 @@ local function redessinerBientot()
   if dessinPrevu then return end
   dessinPrevu = true
   C_Timer.After(0.5, function() dessinPrevu = false; redessiner() end)
+end
+
+-- La liste des membres a changé par l'état d'un membre (#23, Etats.lua) : j'entre (invité), je n'y suis plus, ou
+-- d'autres sont entrés ou partis.
+function changerListe(l)
+  if l.entre then
+    jeu.entrer()
+    local t = {}
+    for i, m in ipairs(e.db.compagnie.membres) do t[i] = m.nom end
+    jeu.dire("Tu entres dans la Compagnie : " .. table.concat(t, ", ") .. ".")
+  elseif l.sorti then jeu.dire("Tu n'es plus membre de la Compagnie.")
+  else
+    for _, nom in ipairs(l.ajoutes) do jeu.dire(nom .. " est entré dans la Compagnie.") end
+    for _, nom in ipairs(l.retires) do jeu.dire(nom .. " n'est plus dans la Compagnie.") end
+  end
+  ns.majCompagnie()
 end
 
 -- La Compagnie a changé : le mode suit, et mon état part (forcé : de nouveaux membres ne l'ont pas).

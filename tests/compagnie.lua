@@ -3,9 +3,11 @@
 -- retenus, ceux de Léo arrivent par l'événement CHAT_MSG_ADDON du cadre CompagnieMessages.
 local LEO, MIRA = "Player-1-0000ABCD", "Player-1-0000BCDE"
 -- Les champs d'un état ajoutés après le 10e, vides : APRES_ZONE, ceux après la zone de la Compagnie (#27 : mes
--- prérequis manquants) ; FIN, tous (#24 : la zone, puis APRES_ZONE).
-local APRES_ZONE = "#"
+-- prérequis manquants ; #23 : la liste des membres) ; FIN, tous (#24 : la zone, puis APRES_ZONE).
+local APRES_ZONE = "##"
 local FIN = "#" .. APRES_ZONE
+-- La fin de mon état, tel qu'il part dans une Compagnie (motif) : zone et prérequis vides, puis la liste des membres.
+local MIEN = "###%d+=[^#]+$"
 
 local function moi() return { guid = UnitGUID("player"), nom = AzerothCommune.Personnage().nom } end
 
@@ -17,8 +19,9 @@ AzerothCommune.Lire = function(self, t, ...)
     return lireDuSocle(self, t, ...)
 end
 
--- Les lignes affichées de la liste des membres, dans l'ordre : { nom, presence, retirer = bouton ou nil }.
-local function lignes()
+-- Les lignes affichées de la liste des membres, dans l'ordre : { nom, presence, retirer = bouton ou nil } ; sans les
+-- joueurs du groupe à inviter (#23 : le simulateur met le joueur dans un groupe de 5), sauf avecGroupe.
+local function lignes(avecGroupe)
     local t = {}
     local function parcourir(f)
         for _, c in ipairs({ f:GetChildren() }) do
@@ -28,11 +31,13 @@ local function lignes()
     end
     parcourir(CompagnieFrame)
     table.sort(t, function(a, b) return a:GetTop() > b:GetTop() end)
-    for i, r in ipairs(t) do
+    local l = {}
+    for _, r in ipairs(t) do
         local b = r.cells[3]
-        t[i] = { nom = r.cells[1]:GetText(), presence = r.cells[2]:GetText(), retirer = b:IsShown() and b or nil }
+        local x = { nom = r.cells[1]:GetText(), presence = r.cells[2]:GetText(), retirer = b:IsShown() and b or nil }
+        if avecGroupe or not (x.presence or ""):find("groupe", 1, true) then l[#l + 1] = x end
     end
-    return t
+    return l
 end
 
 -- Ce que Compagnie écrit dans le chat pendant f.
@@ -481,7 +486,7 @@ test("une demande d'état reçoit le mien : au groupe du jeu, ou chuchoté hors 
             local m = envoyes[#envoyes]
             assertEquals("WHISPER", m.canal)
             assertEquals("Léo Lame", m.cible)
-            assertTrue(m.texte:find("^E;essai;%d+/1/1;%d+#1001:0:3/8##Forêt d'Elwynn=1001##[^#]*#%d*#%d*##" .. FIN .. "$") ~= nil, m.texte)
+            assertTrue(m.texte:find("^E;essai;%d+/1/1;%d+#1001:0:3/8##Forêt d'Elwynn=1001##[^#]*#%d*#%d*##" .. MIEN) ~= nil, m.texte)
         end)
         avecLeo(function(envoyes)
             recu("D;essai")
@@ -758,7 +763,7 @@ test("quêtes d'avant (#20) : celles de Léo à part, nommées, avec son avancem
             assertTrue(not (CompagnieSuiviAFaire1 and CompagnieSuiviAFaire1:IsShown()), "aucun écart : ni « Partager », ni « Rendue en avance »")
             evenement("QUEST_LOG_UPDATE")
             ecouler(5)
-            assertTrue(envoyes[#envoyes].texte:find("#2101#" .. FIN .. "$") ~= nil, "mon état porte ma quête d'avant : " .. envoyes[#envoyes].texte)
+            assertTrue(envoyes[#envoyes].texte:find("#2101#" .. MIEN) ~= nil, "mon état porte ma quête d'avant : " .. envoyes[#envoyes].texte)
         end)
     end)
     CompagnieDB.avant = nil
@@ -824,7 +829,7 @@ test("la liste À faire se dessine avec ses boutons ; aucun abandon sans un clic
             assertEquals(1, abandons, "confirmé : un abandon")
             assertEquals("Léo", CompagnieDB.ecartees[1001].par, "déjà écartée : pas de nouvelle décision")
             ecouler(5)
-            assertTrue(envoyes[#envoyes].texte:find("#1001:1:100:Léo#[^#]*#%d*#%d*##" .. FIN .. "$") ~= nil, "mon état porte l'écartée : " .. envoyes[#envoyes].texte)
+            assertTrue(envoyes[#envoyes].texte:find("#1001:1:100:Léo#[^#]*#%d*#%d*##" .. MIEN) ~= nil, "mon état porte l'écartée : " .. envoyes[#envoyes].texte)
             abandons = 0
         end)
         -- Le jeu retire les pattes de mon journal : l'écart est résorbé, il n'apparaît plus.
@@ -1145,7 +1150,7 @@ test("foyer et pierre se dessinent depuis une Compagnie fabriquée, sans nommer 
                 ecouler(5)
                 assertNil(bouton("CompagnieSuiviAFaire1"), "lié au foyer : plus d'écart")
                 local m = envoyes[#envoyes]
-                assertTrue(m and m.texte:find("#Comté%-de%-l'Or#" .. maintenant .. "###" .. FIN .. "$") ~= nil, m and m.texte)
+                assertTrue(m and m.texte:find("#Comté%-de%-l'Or#" .. maintenant .. "###" .. MIEN) ~= nil, m and m.texte)
             end)
             -- Mode éteint : le suivi se ferme, la pierre avec lui.
             avecGroupe({}, false, function() dits(function() SlashCmdList.COMPAGNIE("suivi") end) end)
@@ -1355,7 +1360,7 @@ test("zone de la Compagnie (#24) : le menu, une zone grisée sous le niveau ; ch
                     assertEquals("Zone : Bois de la Pénombre (Léo à contrôler)", CompagnieZoneBouton:GetText())
                     -- Léo choisit la Marche de l'Ouest après moi : le chat le dit, le suivi suit.
                     t = dits(function()
-                        chuchote("E;essai;1/1/1;10#1001:0#########40:" .. math.floor(GetServerTime() + 60) .. ":Léo#40")
+                        chuchote("E;essai;1/1/1;10#1001:0#########40:" .. math.floor(GetServerTime() + 60) .. ":Léo#40#")
                     end)
                     assertTrue(contient(t, "Léo a choisi Marche de l'Ouest pour la Compagnie."), t)
                     assertEquals("Zone : Marche de l'Ouest", CompagnieZoneBouton:GetText(), "Léo l'a contrôlée : rien à contrôler")
@@ -1412,7 +1417,7 @@ test("prérequis manquant (#27) : l'écart se dessine dans À faire, sa bulle di
                     avecLeo(function(envoyes)
                         evenement("QUEST_LOG_UPDATE")
                         ecouler(5)
-                        assertTrue(envoyes[#envoyes].texte:find("#148=952:940$") ~= nil, envoyes[#envoyes].texte)
+                        assertTrue(envoyes[#envoyes].texte:find("#148=952:940#%d+=") ~= nil, envoyes[#envoyes].texte)
                     end)
                     -- Clic droit sur la ligne (inactive) : Écarter le Bosquet ; l'écart disparaît, la chaîne avec lui.
                     local racine = menuDe(function() b:GetScript("OnMouseUp")(b, "RightButton") end)
@@ -1424,6 +1429,60 @@ test("prérequis manquant (#27) : l'écart se dessine dans À faire, sa bulle di
                     assertTrue(CompagnieDB.ecartees[952].ecartee and not CompagnieDB.ecartees[940], "une seule décision, la chaîne suit")
                 end)
             end)
+        end)
+    end)
+    eteindre()
+end)
+
+---------------------------------------------------------------------------------------------------
+-- Inviter (#23).
+
+test("Inviter (#23) : se dessine pour un joueur du groupe non membre ; l'invitation part, sa réponse le fait entrer ; invité, j'entre avec l'état de qui m'invite", function()
+    avecGroupe({ { LEO, "Léo", "Lame" }, { MIRA, "Mira", "Feuille" } }, false, function(envoyes)
+        avecJournal({}, function()
+            fabriquer({ guid = LEO, nom = "Léo Lame" })
+            CompagnieDB.compagnie.date = 1
+            SlashCmdList.COMPAGNIE("")
+            local l = lignes(true)
+            assertEquals(3, #l, "Léo, moi, et Mira du groupe")
+            assertEquals("Mira Feuille", l[3].nom)
+            assertEquals("Inviter", l[3].retirer:GetText(), "« Inviter » pour Mira, du groupe, pas membre")
+            assertEquals("Retirer", l[2].retirer:GetText(), "« Retirer » pour Léo, membre")
+            local t = dits(function() l[3].retirer:Click() end)
+            assertTrue(contient(t, "Invitation envoyée à Mira Feuille"), t)
+            assertEquals("I;essai;" .. MIRA, envoyes[#envoyes].texte)
+            assertEquals("PARTY", envoyes[#envoyes].canal)
+            assertEquals("Invité…", lignes(true)[3].retirer:GetText(), "l'état de l'invitation, sur son bouton")
+            t = dits(function() recu("A;essai", "Mira Feuille") end)
+            assertTrue(contient(t, "Mira Feuille entre dans la Compagnie."), t)
+            assertEquals(3, #CompagnieDB.compagnie.membres)
+            assertEquals(3, #lignes(), "Mira est membre")
+            -- Mon état porte la nouvelle liste (pour les absents, et pour qu'elle entre chez elle).
+            ecouler(5)
+            assertTrue(envoyes[#envoyes].texte:find("Mira Feuille$") ~= nil, envoyes[#envoyes].texte)
+            CompagnieFrame:Hide()
+        end)
+    end)
+    eteindre()
+    -- Invité : Léo m'invite, j'accepte ; son état, qui porte la liste avec moi, me fait entrer.
+    avecGroupe({ { LEO, "Léo", "Lame" } }, false, function(envoyes)
+        avecJournal({ pattes(3) }, function()
+            CompagnieDB.compagnie = nil
+            recu("I;c1;" .. moi().guid)
+            local _, popup = StaticPopup_Visible("COMPAGNIE_INVITATION")
+            assertNotNil(popup, "l'invitation s'affiche")
+            popup.button1:Click()
+            assertEquals("A;c1", envoyes[#envoyes].texte)
+            assertNil(CompagnieDB.compagnie, "pas encore entré")
+            local g = moi().guid:gsub("^Player%-", "")
+            local t = dits(function()
+                recu("E;c1;1/1/1;10############" .. math.floor(GetServerTime()) .. "=" .. LEO:gsub("^Player%-", "") ..
+                    ":Léo Lame,1-0000BCDE:Mira Feuille," .. g .. ":" .. moi().nom)
+            end)
+            assertTrue(contient(t, "Tu entres dans la Compagnie : Léo Lame"), t)
+            assertEquals("c1", CompagnieDB.compagnie.id)
+            assertEquals(3, #CompagnieDB.compagnie.membres)
+            assertTrue(CompagnieDB.avant[1001], "mes quêtes d'avant sont notées à mon entrée")
         end)
     end)
     eteindre()

@@ -1,15 +1,21 @@
--- Compagnie, les membres : fonder, accepter, refuser, quitter, retirer. La logique seule, sans aucun appel à l'API du
+-- Compagnie, les membres : fonder, inviter, accepter, refuser, quitter, retirer. La logique seule, sans aucun appel à l'API du
 -- jeu (vérifié par check.lua) ; Compagnie.lua lui passe ce que le jeu donne :
---   e      : l'état { db = CompagnieDB, proposition = celle reçue, fondation = la mienne en cours }
+--   e      : l'état { db = CompagnieDB, proposition = celle reçue (fondation, ou invitation : invitation = true),
+--            fondation = la mienne en cours, invitations = { [GUID invité] = idCompagnie } (les miennes en cours) }
 --   moi    : mon GUID
 --   groupe : les personnages connectés de mon groupe du jeu, moi d'abord : { { guid, nom }, … } (donnés par le serveur)
 --   io     : { envoyer = fn(texte) au groupe du jeu, dire = fn(texte) au joueur, proposer = fn(proposition), maj = fn(),
---              entrer = fn() : je deviens membre (fondation), mes quêtes d'avant sont notées (#20) }
--- La Compagnie (donnée propre) : db.compagnie = { id, membres = { { guid, nom }, … } }, de 2 à 5 membres.
+--              entrer = fn() : je deviens membre (fondation), mes quêtes d'avant sont notées (#20),
+--              heure = fn() -> heure serveur (la date de la liste) }
+-- La Compagnie (donnée propre) : db.compagnie = { id, date, membres = { { guid, nom }, … } }, de 2 à 5 membres ; date :
+-- l'heure serveur du dernier changement de la liste (fondée, quelqu'un entre, quitte ou est retiré). La liste part avec
+-- l'état (Etats.lua) : un absent apprend la plus récente à son retour, et un invité y entre (#23).
 -- Messages d'add-on, envoyés au groupe du jeu (jamais chuchotés) : « verbe;id[;GUID,GUID…] »
 --   P;id;liste  proposition, le fondateur d'abord     A;id  j'accepte
 --   R;id[;deja|occupe]  je refuse (déjà membre, ou une fondation en cours pour moi)
 --   F;id;liste  la Compagnie fondée                    Q;id  je quitte     X;id;GUID    je retire ce membre
+--   I;id;GUID   j'invite ce joueur du groupe dans la Compagnie id (#23) ; il répond A;id ou R;id[;deja|occupe] ; accepté,
+--               il entre chez moi, et chez lui avec mon état qui porte la nouvelle liste (Etats.lua)
 -- L'expéditeur (de) est le GUID que le serveur donne pour son nom dans le groupe, jamais pris dans le message. Un message
 -- d'un non-membre est ignoré, sauf une proposition qui me nomme, venue de son fondateur. Donnée reçue telle quelle
 -- entre membres (CONTEXT-MAP) : le pire est une liste fausse.
@@ -78,7 +84,7 @@ function ns.cloturer(e, moi, groupe, io)
   local guids = { moi }
   for i = 2, #f.guids do if f.reponses[f.guids[i]] == "A" then guids[#guids + 1] = f.guids[i] end end
   if #guids < 2 then return io.dire("Personne n'a accepté : pas de Compagnie.") end
-  e.db.compagnie = { id = f.id, membres = membres(guids, groupe) }
+  e.db.compagnie = { id = f.id, date = io.heure(), membres = membres(guids, groupe) }
   io.entrer()
   io.envoyer("F;" .. f.id .. ";" .. table.concat(guids, ","))
   io.dire("Compagnie fondée : " .. noms(e.db.compagnie) .. ".")
@@ -101,18 +107,50 @@ function ns.repondre(e, oui, io)
   io.envoyer((oui and "A;" or "R;") .. p.id)
 end
 
--- Une proposition acceptée sans F au bout du délai (le fondateur est parti sans clore) : elle n'engage plus.
+-- Une proposition acceptée sans F au bout du délai (le fondateur est parti sans clore), ou une invitation acceptée
+-- sans l'état qui me fait entrer : elle n'engage plus.
 function ns.expirer(e, id, io)
   local p = e.proposition
   if not (p and p.id == id and p.accepte) then return end
   e.proposition = nil
-  io.dire("La Compagnie proposée par " .. p.nom .. " n'a pas été fondée.")
+  io.dire(p.invitation and "L'invitation de " .. p.nom .. " n'a pas abouti." or "La Compagnie proposée par " .. p.nom .. " n'a pas été fondée.")
+end
+
+-- Inviter un joueur de mon groupe du jeu dans ma Compagnie (#23) ; nil, raison si c'est refusé. Mêmes gardes que la
+-- fondation : 5 membres au plus (revu à l'acceptation), une seule Compagnie par personnage (il refuse d'office).
+function ns.inviter(e, moi, groupe, guid, io)
+  local c = e.db.compagnie
+  if not c then return nil, "Pas de Compagnie : fonde-la d'abord." end
+  if #c.membres >= ns.MAX then return nil, ("La Compagnie a déjà %d membres : c'est le plus."):format(ns.MAX) end
+  if ns.membre(c, guid) then return nil, nomDans(groupe, guid) .. " est déjà membre de la Compagnie." end
+  if guid == moi or not index(groupe, guid) then return nil, "Inviter se fait depuis un groupe du jeu : invite-le d'abord dans ton groupe." end
+  e.invitations = e.invitations or {}
+  e.invitations[guid] = c.id
+  io.envoyer("I;" .. c.id .. ";" .. guid)
+  return true
+end
+
+-- La réponse d'un invité : accepté, il entre (si la Compagnie a encore de la place) ; la nouvelle liste part avec mon
+-- état (io.maj : la Compagnie a changé).
+local function reponseInvite(e, groupe, de, verbe, arg, io)
+  local c, nom = e.db.compagnie, nomDans(groupe, de)
+  e.invitations[de] = nil
+  if verbe == "R" then
+    return io.dire(nom .. (arg == "deja" and " est déjà membre d'une Compagnie." or arg == "occupe"
+      and " a une fondation en cours." or " refuse d'entrer dans la Compagnie."))
+  end
+  if #c.membres >= ns.MAX then return io.dire(("La Compagnie a déjà %d membres : %s n'entre pas."):format(ns.MAX, nom)) end
+  c.membres[#c.membres + 1] = { guid = de, nom = nom }
+  c.date = io.heure()
+  io.dire(nom .. " entre dans la Compagnie.")
+  io.maj()
 end
 
 -- Moins de deux membres : il n'y a plus de Compagnie.
-local function oter(e, i)
+local function oter(e, i, io)
   local c = e.db.compagnie
   table.remove(c.membres, i)
+  c.date = io.heure()
   if #c.membres < 2 then e.db.compagnie = nil end
 end
 
@@ -132,7 +170,7 @@ function ns.retirer(e, moi, guid, io)
   if not i or guid == moi then return false end
   io.envoyer("X;" .. c.id .. ";" .. guid)
   local nom = c.membres[i].nom
-  oter(e, i)
+  oter(e, i, io)
   io.dire(nom .. " est retiré de la Compagnie." .. (e.db.compagnie and "" or " Tu restes seul : plus de Compagnie."))
   io.maj()
   return true
@@ -160,7 +198,19 @@ function ns.recevoir(e, moi, groupe, de, texte, io)
     e.proposition = { id = id, de = de, nom = nom, guids = guids, deja = c ~= nil }
     if c then io.envoyer("R;" .. id .. ";deja") end
     io.proposer(e.proposition)
+  elseif verbe == "I" then
+    if arg ~= moi then return end -- une invitation pour un autre
+    local nom = nomDans(groupe, de)
+    if engage(e) == "occupe" then
+      io.envoyer("R;" .. id .. ";occupe")
+      return io.dire(nom .. " t'invite dans sa Compagnie : refusé d'office, " .. (e.fondation
+        and "ta propre proposition est en cours." or "tu as déjà accepté celle de " .. e.proposition.nom .. "."))
+    end
+    e.proposition = { id = id, de = de, nom = nom, invitation = true, deja = c ~= nil }
+    if c then io.envoyer("R;" .. id .. ";deja") end
+    io.proposer(e.proposition)
   elseif verbe == "A" or verbe == "R" then
+    if c and c.id == id and e.invitations and e.invitations[de] == id then return reponseInvite(e, groupe, de, verbe, arg, io) end
     local f = e.fondation
     if not (f and f.id == id and f.reponses[de] == false) then return end
     f.reponses[de] = verbe
@@ -174,7 +224,7 @@ function ns.recevoir(e, moi, groupe, de, texte, io)
     local p, guids = e.proposition, liste(arg)
     if c or not (p and p.id == id and p.de == de and p.accepte) or not index(guids, moi) then return end
     e.proposition = nil
-    e.db.compagnie = { id = id, membres = membres(guids, groupe) }
+    e.db.compagnie = { id = id, date = io.heure(), membres = membres(guids, groupe) }
     io.entrer()
     io.dire("Compagnie fondée : " .. noms(e.db.compagnie) .. ".")
     io.maj()
@@ -188,7 +238,7 @@ function ns.recevoir(e, moi, groupe, de, texte, io)
       e.db.compagnie = nil
       io.dire(par .. " t'a retiré de la Compagnie.")
     else
-      oter(e, i)
+      oter(e, i, io)
       io.dire((verbe == "Q" and nom .. " a quitté la Compagnie." or par .. " a retiré " .. nom .. " de la Compagnie.")
         .. (e.db.compagnie and "" or " Tu restes seul : plus de Compagnie."))
     end

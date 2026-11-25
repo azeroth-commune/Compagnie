@@ -6,11 +6,12 @@
 --             auberge = "Comté-de-l'Or", liaison = heure serveur de la liaison, finRecharge = heure serveur où la pierre
 --             de foyer est prête (les trois du foyer, #9 : nil quand inconnus, ou pierre prête),
 --             zoneCompagnie = { zone = areaID, date, par = "Léo" } (#24 : la zone de la Compagnie, nil sans choix),
---             prerequis = { zone = areaID, manquants = { { quete, prerequis }, … } } (#27 : mes prérequis manquants) }
+--             prerequis = { zone = areaID, manquants = { { quete, prerequis }, … } } (#27 : mes prérequis manquants),
+--             liste = { date, membres = { { guid, nom }, … } } (#23 : la liste des membres) }
 -- Le texte des objectifs ne part jamais (il porte un code de grammaire du jeu, « |4…; ») : seulement les nombres, dans
 -- l'ordre des objectifs ; chacun retrouve le texte dans son propre journal (Calcul.lua le prend chez qui l'a).
 -- Corps encodé : « niveau#quête;quête…#rendue,rendue…#zone=id,id;zone=id…#écartée;écartée…#auberge#liaison#fin
--- #avant,avant…#renduesAvant,renduesAvant…#zone:date:par#zone=quête:prérequis,… »,
+-- #avant,avant…#renduesAvant,renduesAvant…#zone:date:par#zone=quête:prérequis,…#date=serveur-id:nom,… »,
 -- une quête « id:finie(0|1)[:fait/total…] », ids triés. Le 4e champ (#13) range les quêtes par zone (l'en-tête de zone de mon journal), zones triées ; vide si
 -- aucune quête n'a de zone. Une zone : 1 à MAX_ZONE octets, ni caractère de contrôle, ni « | » (codes du chat), ni
 -- séparateur du format ; un en-tête de mon journal qui ne l'est pas ne part pas (la quête part sans zone). Le 5e champ
@@ -27,7 +28,10 @@
 -- Le 11e champ (#24) : la zone de la Compagnie telle que je la connais, « areaID:date:par » (mêmes règles qu'une
 -- décision sur une quête écartée), vide sans zone choisie. Le 12e (#27) : mes prérequis manquants pour la zone de la
 -- Compagnie, « zone=quête:prérequis,quête:prérequis… » (zone : celle qu'ils couvrent ; « zone » seule : rien ne manque ;
--- vide : pas de zone), au plus MAX_PREREQUIS, les premiers par quête ; jamais mes quêtes rendues (trop lourd).
+-- vide : pas de zone), au plus MAX_PREREQUIS, les premiers par quête ; jamais mes quêtes rendues (trop lourd). Le 13e
+-- (#23) : la liste des membres de la Compagnie telle que je la connais, « date=serveur-id:Prénom Nom,… » (date : celle
+-- du dernier changement de la liste, Membres.lua ; le GUID sans « Player- » ; le nom, mêmes règles qu'une zone), de 2 à
+-- ns.MAX membres, vide hors d'une Compagnie.
 -- Messages d'add-on (préfixe Compagnie) : « E;idCompagnie;envoi/i/n;morceau » (un état en n morceaux bornés à 255
 -- octets) et « D;idCompagnie » (demande d'état). L'expéditeur (de) est le GUID que Compagnie.lua tient du serveur.
 -- Donnée reçue entre membres (CONTEXT-MAP) : servie telle quelle, mais lue strictement (un champ mal formé et tout l'état
@@ -81,6 +85,13 @@ local function prerequis(p)
   return p.zone .. (#t > 0 and "=" .. table.concat(t, ",") or "")
 end
 
+local function listeMembres(l)
+  if not l then return "" end
+  local t = {}
+  for i, m in ipairs(l.membres) do t[i] = m.guid:gsub("^Player%-", "") .. ":" .. (zoneValide(m.nom) and m.nom or "?") end
+  return (l.date or 0) .. "=" .. table.concat(t, ",")
+end
+
 function ns.encoder(etat)
   local quetes, rendues, zones = {}, {}, {}
   for _, id in ipairs(trier(etat.quetes)) do
@@ -108,14 +119,14 @@ function ns.encoder(etat)
   return (etat.niveau or 0) .. "#" .. table.concat(quetes, ";") .. "#" .. table.concat(rendues, ",") .. "#" ..
     table.concat(parZone, ";") .. "#" .. table.concat(ecartees, ";") .. "#" ..
     (zoneValide(etat.auberge) and etat.auberge or "") .. "#" .. (etat.liaison or "") .. "#" .. (etat.finRecharge or "") ..
-    "#" .. table.concat(avant, ",") .. "#" .. table.concat(trier(etat.renduesAvant), ",") .. "#" .. decision(etat.zoneCompagnie, "zone") .. "#" .. prerequis(etat.prerequis)
+    "#" .. table.concat(avant, ",") .. "#" .. table.concat(trier(etat.renduesAvant), ",") .. "#" .. decision(etat.zoneCompagnie, "zone") .. "#" .. prerequis(etat.prerequis) .. "#" .. listeMembres(etat.liste)
 end
 
 -- L'état, ou nil au moindre champ mal formé. maintenant : mon heure serveur (nil : pas de contrôle des dates, les tests
 -- du format).
 function ns.decoder(corps, maintenant)
   local f = couper(corps, "#")
-  local niveau = #f == 12 and entier(f[1], 200)
+  local niveau = #f == 13 and entier(f[1], 200)
   if not niveau or niveau < 1 then return end
   local etat = { niveau = niveau, quetes = {}, rendues = {}, ecartees = {}, avant = {}, renduesAvant = {} }
   local liste = f[2] == "" and {} or couper(f[2], ";")
@@ -183,6 +194,19 @@ function ns.decoder(corps, maintenant)
     end
     etat.prerequis = { zone = z, manquants = manquants }
   end
+  if f[13] ~= "" then
+    local date, liste = f[13]:match("^(%d+)=(.*)$")
+    date = date and entier(date, 2147483647)
+    local membres, vus = {}, {}
+    for _, x in ipairs(date and couper(liste, ",") or {}) do
+      local g, nom = x:match("^(%d+%-%w+):(.*)$")
+      if not (g and #g <= 24 and zoneValide(nom)) or vus[g] then return end
+      vus[g] = true
+      membres[#membres + 1] = { guid = "Player-" .. g, nom = nom }
+    end
+    if not date or #membres < 2 or #membres > ns.MAX or (maintenant and date > maintenant + AVENIR) then return end
+    etat.liste = { date = date, membres = membres }
+  end
   local vues = {}
   for _, champ in ipairs(f[4] == "" and {} or couper(f[4], ";")) do
     local z, ids = champ:match("^([^=]*)=(.*)$")
@@ -208,12 +232,15 @@ end
 
 -- Un message E ou D reçu de de (GUID). e = { db = CompagnieDB, moi = mon GUID } ; io = { maj = fn(), demande = fn(de),
 -- maintenant = fn() -> secondes (GetTime : le débit), heure = fn() -> heure serveur (les dates des décisions),
--- annoncer = fn(décisions à annoncer, voir ns.fusionner), zone = fn(zone de la Compagnie reçue, plus récente) }. Rend true si le message est un message d'état (traité ou ignoré).
+-- annoncer = fn(décisions à annoncer, voir ns.fusionner), zone = fn(zone de la Compagnie reçue, plus récente),
+-- liste = fn(changement de la liste des membres, voir ns.fusionnerListe) }. Rend true si le message est un message d'état (traité ou ignoré).
 function ns.recevoirEtat(e, de, texte, io)
   local verbe, id, reste = texte:match("^([ED]);([^;]+);?(.*)$")
   if not verbe then return false end
-  local c = e.db.compagnie
-  if de == e.moi or not (c and c.id == id and ns.membre(c, de)) then return true end -- un non-membre : ignoré
+  local c, p = e.db.compagnie, e.proposition
+  -- Un invité (#23) qui a accepté écoute l'état de qui l'a invité : la liste qu'il porte le fait entrer.
+  local invite = not c and p and p.invitation and p.accepte and p.id == id and p.de == de
+  if de == e.moi or not (invite or c and c.id == id and ns.membre(c, de)) then return true end -- un non-membre : ignoré
   e.debit = e.debit or {}
   local d, t = e.debit[de], io.maintenant()
   if not d or t - d.debut >= 60 then d = { debut = t, n = 0 }; e.debit[de] = d end
@@ -232,12 +259,15 @@ function ns.recevoirEtat(e, de, texte, io)
   e.tampons[de] = nil
   local etat = ns.decoder(table.concat(b), io.heure())
   if not etat then return true end
+  local liste = ns.fusionnerListe(e, id, etat.liste)
+  if invite and not (liste and liste.entre) then return true end -- pas encore dans sa liste
   e.db.etats = e.db.etats or {}
   e.db.etats[de] = etat -- le dernier état connu : une donnée propre, sauvegardée
   local changees, zone = ns.fusionner(e.db, etat.ecartees), ns.fusionnerZone(e.db, etat.zoneCompagnie)
   io.maj()
-  if #changees > 0 then io.annoncer(changees) end
+  if #changees > 0 and not invite then io.annoncer(changees) end -- l'invité les trouve dans l'onglet Écartées
   if zone then io.zone(etat.zoneCompagnie) end
+  if liste then io.liste(liste) end
   return true
 end
 
@@ -263,6 +293,31 @@ function ns.fusionner(db, recues)
   end
   table.sort(changees, function(a, b) return a.quete < b.quete end)
   return changees
+end
+
+-- La liste des membres reçue avec l'état d'un membre (#23) : plus récente que la mienne, elle la remplace (ma Compagnie,
+-- d'id id). Rend ce qui change, ou nil : { entre = true } (invité, j'y suis : j'entre), { sorti = true } (je n'y suis
+-- plus : plus de Compagnie), sinon { ajoutes = { noms }, retires = { noms } }.
+function ns.fusionnerListe(e, id, recue)
+  local c = e.db.compagnie
+  if not recue or c and recue.date <= (c.date or 0) then return nil end
+  local l = { membres = recue.membres }
+  if not ns.membre(l, e.moi) then
+    if not c then return nil end
+    e.db.compagnie = nil
+    return { sorti = true }
+  end
+  local t = { ajoutes = {}, retires = {} }
+  for _, m in ipairs(recue.membres) do if c and not ns.membre(c, m.guid) then table.insert(t.ajoutes, m.nom) end end
+  for _, m in ipairs(c and c.membres or {}) do if not ns.membre(l, m.guid) then table.insert(t.retires, m.nom) end end
+  if not c then t, e.proposition = { entre = true }, nil end
+  local membres = {} -- une copie ; un nom inconnu de l'expéditeur (« ? ») garde celui que je connais
+  for i, m in ipairs(recue.membres) do
+    local k = c and ns.membre(c, m.guid)
+    membres[i] = { guid = m.guid, nom = m.nom == "?" and k and c.membres[k].nom or m.nom }
+  end
+  e.db.compagnie = { id = id, date = recue.date, membres = membres }
+  return t
 end
 
 -- La zone de la Compagnie reçue avec l'état d'un membre (#24) : la plus récente l'emporte (à la même seconde, le plus

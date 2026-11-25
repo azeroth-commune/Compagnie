@@ -14,6 +14,18 @@ _Avoid_: groupe (réservé au groupe du jeu), équipe, guilde, party
 Un personnage d'une Compagnie ; un personnage est membre d'une seule Compagnie à la fois.
 _Avoid_: joueur (un joueur peut avoir des personnages dans plusieurs Compagnies)
 
+**Fonder**:
+Créer une Compagnie depuis un groupe du jeu ; chaque personnage du groupe accepte ou refuse d'en être membre.
+_Avoid_: créer, inviter (réservé à l'entrée dans une Compagnie qui existe)
+
+**Inviter**:
+Proposer à un joueur de mon groupe du jeu d'entrer dans la Compagnie qui existe déjà (n'importe quel membre le peut, depuis la fenêtre de la Compagnie) ; il accepte ou refuse, comme à la fondation, avec les mêmes gardes (5 membres au plus, une seule Compagnie par personnage). Accepté, il arrive avec ses quêtes d'avant ; le foyer, la zone de la Compagnie et les quêtes écartées sont gardés. La nouvelle liste des membres, datée, part avec l'état de chacun : un absent l'apprend à son retour (comme un départ : celui qui n'est plus dans la liste la plus récente n'est plus membre).
+_Avoid_: recruter, ajouter, rejoindre
+
+**Retirer**:
+Sortir un membre de la Compagnie sans son accord (typiquement un absent qui a arrêté) ; n'importe quel membre peut le faire, il n'y a pas de chef.
+_Avoid_: exclure, kick
+
 **Absent**:
 Un membre qui ne joue pas en ce moment ; il compte avec son dernier état connu.
 _Avoid_: hors ligne (seul), inactif
@@ -107,14 +119,6 @@ Un bandeau posé au-dessus de la fenêtre d'abandon du jeu quand abandonner éca
 **Chemin de synchronisation**:
 La suite de quêtes, calculée par l'add-on, qui ramène tous les membres au même point (par exemple quand un personnage rejoint une Compagnie en cours).
 _Avoid_: rattrapage
-
-**Fonder**:
-Créer une Compagnie depuis un groupe du jeu ; chaque personnage du groupe accepte ou refuse d'en être membre.
-_Avoid_: créer, inviter
-
-**Retirer**:
-Sortir un membre de la Compagnie sans son accord (typiquement un absent qui a arrêté) ; n'importe quel membre peut le faire, il n'y a pas de chef.
-_Avoid_: exclure, kick
 
 ## Relationships
 
