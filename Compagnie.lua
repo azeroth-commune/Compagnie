@@ -473,9 +473,9 @@ end
 local function bulleEcarter(owner, details) -- details : ce que dit la ligne en entier (prérequis manquant, #27)
   GameTooltip:SetOwner(owner, "ANCHOR_LEFT")
   if details then
-    GameTooltip:SetText(details, 1, 1, 1, true)
+    GameTooltip:SetText(details, 1, 1, 1, 1, true)
     GameTooltip:AddLine("Clic droit : écarter pour la Compagnie", 0.6, 0.6, 0.6, true)
-  else GameTooltip:SetText("Clic droit : écarter pour la Compagnie", 1, 1, 1, true) end
+  else GameTooltip:SetText("Clic droit : écarter pour la Compagnie", 1, 1, 1, 1, true) end
   GameTooltip:Show()
 end
 -- Écartée pour de bon : par une décision, ou emportée avec la chaîne d'une quête écartée (#27).
@@ -751,7 +751,7 @@ local function placerLignes(blocs)
       l:SetScript("OnEnter", function(self)
         if self.sansEcarter then
           GameTooltip:SetOwner(self, "ANCHOR_LEFT")
-          GameTooltip:SetText("Clic droit : quête personnelle", 1, 1, 1, true)
+          GameTooltip:SetText("Clic droit : quête personnelle", 1, 1, 1, 1, true)
           GameTooltip:Show()
         elseif self.quete then bulleEcarter(self) end
       end)
