@@ -966,6 +966,7 @@ local function ouvrirSuivi()
     -- Beaucoup de quêtes : la fenêtre s'arrête à 60 % de l'écran et les quêtes défilent (molette).
     local defil = CreateFrame("ScrollFrame", "CompagnieSuiviDefil", f, "UIPanelScrollFrameTemplate")
     defil.scrollBarHideable = true -- sans cadre, la barre ne se montre que s'il y a à faire défiler
+    defil.ScrollBar:Hide() -- posé après son OnLoad, qui l'a montrée : cachée d'office, comme UIPanelInputScrollFrame_OnLoad
     defil:SetPoint("TOPLEFT", z, "BOTTOMLEFT", 0, -4)
     defil:SetPoint("BOTTOMRIGHT", -32, 12)
     local contenu = CreateFrame("Frame", "CompagnieSuiviContenu", defil)
