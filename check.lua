@@ -160,6 +160,13 @@ assert(x.objet.ramasse == nil and x.objet.pnjs[1] == "Rivepatte chétif", "sans 
 c = ns.calculer({ { nom = "Léo", niveau = 5, quetes = { [KOBOLDS] = kobolds(false) } }, { nom = "Virgile", niveau = 5, quetes = {} } })
 x = seul(c.aFaire, "prendre", "Virgile", KOBOLDS)
 assert(x.donneur == nil and x.objet == nil, "sans endroit")
+-- Personnelle (#7) ou niveau insuffisant (#7) : pas « à prendre soi-même ».
+c = ns.calculer({ { nom = "Léo", niveau = 5, quetes = { [KOBOLDS] = { finie = false, objectifs = {}, partageable = false, personnelle = true } } },
+  { nom = "Virgile", niveau = 5, quetes = {} } })
+assert(#c.aFaire == 0, "personnelle : rien à prendre")
+c = ns.calculer({ { nom = "Léo", niveau = 12, quetes = { [KOBOLDS] = kobolds(false) } }, { nom = "Virgile", niveau = 5, quetes = {} } },
+  0, nil, { [KOBOLDS] = { niveau_requis = 10 } })
+seul(c.aFaire, "niveau", "Léo", KOBOLDS)
 -- Résorbé : tous l'ont, ou l'ont déjà rendue ; l'écart n'apparaît plus.
 c = ns.calculer({ { nom = "Virgile", niveau = 5, quetes = { [KOBOLDS] = kobolds(true) } },
   { nom = "Léo", niveau = 5, quetes = { [KOBOLDS] = kobolds() } } })
@@ -951,6 +958,11 @@ corps = ns.encoder(avecOrigines)
 assert(corps:find("^12#7:0n;8:1n;9:0n;10:0n#"), "non partageable : n — " .. corps)
 assert(corps:find("#7=Maréchal Dughan@1429:42:65;8@1436:0:100;9=Gryan Stoutmantle$"), "les origines, en 14e champ : " .. corps)
 assert(pareil(ns.decoder(corps), avecOrigines), "avec les origines : identique (" .. corps .. ")")
+-- Une position hors carte (relevée au bord) ne part pas : le reste de l'état, et le PNJ, restent lisibles.
+corps = ns.encoder({ niveau = 2, quetes = { [7] = { finie = false, objectifs = {}, partageable = false,
+  origine = { nom = "Dughan", carte = 1429, x = 101, y = -1 } }, [8] = { finie = false, objectifs = {}, partageable = false,
+  origine = { carte = 1429, x = 4.5, y = 5 } } } })
+assert(corps:find("#7=Dughan$") and ns.decoder(corps), "position hors carte : pas envoyée — " .. corps)
 -- L'origine d'une quête partageable ne part pas.
 assert(ns.encoder({ niveau = 2, quetes = { [7] = { finie = false, objectifs = {}, partageable = true, origine = { nom = "Dughan" } } } })
   == "2#7:0########" .. FIN, "partageable : pas d'origine")

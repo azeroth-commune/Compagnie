@@ -81,6 +81,10 @@ local function zoneValide(z)
   return type(z) == "string" and #z >= 1 and #z <= MAX_ZONE and not z:find("[%c|#;:,/=]")
 end
 local function nomValide(n) return zoneValide(n) and not n:find("@", 1, true) end -- le nom d'un PNJ (#6)
+-- Une position que decoder accepte (#6) : une position hors carte (x < 0 ou > 100) rendrait tout mon état illisible.
+local function posValide(o)
+  return (entier(tostring(o.carte), 2147483647) or 0) >= 1 and entier(tostring(o.x), 100) and entier(tostring(o.y), 100)
+end
 
 -- Une décision datée (la zone de la Compagnie) : « valeur:date:par », vide sans décision.
 local function decision(d, cle)
@@ -138,7 +142,7 @@ function ns.encoder(etat)
   for _, id in ipairs(trier(etat.quetes)) do
     local q = etat.quetes[id]
     local o = q.partageable == false and q.origine or {}
-    local x = (nomValide(o.nom) and "=" .. o.nom or "") .. (o.carte and o.x and o.y and "@" .. o.carte .. ":" .. o.x .. ":" .. o.y or "")
+    local x = (nomValide(o.nom) and "=" .. o.nom or "") .. (posValide(o) and "@" .. o.carte .. ":" .. o.x .. ":" .. o.y or "")
     if x ~= "" and #x + #tostring(id) < place then
       origines[#origines + 1] = id .. x
       place = place - #origines[#origines] - 1
