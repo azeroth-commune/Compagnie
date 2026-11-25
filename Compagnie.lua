@@ -746,7 +746,7 @@ local function placerLignes(blocs)
       l:RegisterForClicks("RightButtonUp")
       l:RegisterForDrag("LeftButton")
       l:SetScript("OnDragStart", function() f:StartMoving() end)
-      l:SetScript("OnDragStop", function() f:StopMovingOrSizing(); placerPierre() end)
+      l:SetScript("OnDragStop", function() f:GetScript("OnDragStop")(f) end) -- place retenue (socle), pierre replacée
       l:SetScript("OnClick", function(self) if self.quete then menuEcarter(self, self.quete, self.sansEcarter) end end)
       l:SetScript("OnEnter", function(self)
         if self.sansEcarter then
@@ -813,10 +813,10 @@ local function dessinerPetiteListe()
     return
   end
   if not f then
-    f = AC.Fenetre("CompagnieAFaireFrame", "À faire", 290, 80)
+    -- Hauteur qui suit ses lignes ; à gauche de la minicarte (le suivi du jeu est dessous), ou là où le joueur l'a mise.
+    f = AC.Fenetre("CompagnieAFaireFrame", "À faire", 290, 80,
+      { redimensionnable = false, place = { "TOPRIGHT", Minimap, "TOPLEFT", -12, -20 } })
     for i, n in ipairs(UISpecialFrames) do if n == "CompagnieAFaireFrame" then table.remove(UISpecialFrames, i) break end end
-    f:ClearAllPoints()
-    f:SetPoint("TOPRIGHT", Minimap, "TOPLEFT", -12, -20) -- à gauche de la minicarte : le suivi du jeu est dessous
     f:SetFrameStrata("LOW")
     listeAFaire(f, "CompagniePetiteListe", -40)
     f:HookScript("OnHide", function(self)
@@ -837,13 +837,10 @@ local function majBandeau()
   local q = remise and e.db.compagnie and calculer().quetes[remise]
   if not q or q.aRendre then if b then b:Hide() end return end
   if not b then
-    b = CreateFrame("Frame", "CompagnieBandeau", QuestFrame, "BackdropTemplate") -- enfant : caché avec la fenêtre
+    b = CreateFrame("Frame", "CompagnieBandeau", QuestFrame, "TooltipBackdropTemplate") -- enfant : caché avec la fenêtre
     b:SetPoint("TOPLEFT", QuestFrame, "BOTTOMLEFT", 0, -4)
     b:SetPoint("TOPRIGHT", QuestFrame, "BOTTOMRIGHT", 0, -4)
     b:SetHeight(30)
-    b:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
-    b:SetBackdropColor(0.25, 0.05, 0.05, 0.95)
-    b:SetBackdropBorderColor(1, 0.3, 0.2, 0.8)
     b.texte = b:CreateFontString("CompagnieBandeauTexte", "OVERLAY", "GameFontNormal")
     b.texte:SetPoint("LEFT", 10, 0)
     b.texte:SetPoint("RIGHT", -10, 0)
@@ -863,11 +860,11 @@ end
 
 local function ouvrirSuivi()
   if not CompagnieSuiviFrame then
-    local f = AC.Fenetre("CompagnieSuiviFrame", "Compagnie", 290, 160)
+    -- Hauteur qui suit son contenu (dessinerSuivi) ; sous la minicarte, ou là où le joueur l'a mis.
+    local f = AC.Fenetre("CompagnieSuiviFrame", "Compagnie", 290, 160,
+      { redimensionnable = false, place = { "TOPRIGHT", UIParent, "TOPRIGHT", -40, -260 } })
     -- Un suivi reste à l'écran : Échap ne le ferme pas (la croix éteint le mode Compagnie).
     for i, n in ipairs(UISpecialFrames) do if n == "CompagnieSuiviFrame" then table.remove(UISpecialFrames, i) break end end
-    f:ClearAllPoints()
-    f:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", -40, -260) -- sous la minicarte
     f:SetFrameStrata("LOW")
     -- En tête : la zone de la Compagnie (#24), son bouton ouvre le menu des zones ; dessous, la pierre (placerPierre).
     local zc = CreateFrame("Button", "CompagnieZoneBouton", f, "UIPanelButtonTemplate")
@@ -891,13 +888,10 @@ local function ouvrirSuivi()
     fleche:SetSize(14, 14)
     fleche:SetRotation(-math.pi / 2) -- la flèche « > » tournée vers le bas
     fleche:SetPoint("LEFT", z:GetFontString(), "RIGHT", 4, 0)
-    local liste = CreateFrame("Frame", "CompagnieSuiviZones", f, "BackdropTemplate")
+    local liste = CreateFrame("Frame", "CompagnieSuiviZones", f, "TooltipBackdropTemplate")
     liste:SetPoint("TOPLEFT", z, "BOTTOMLEFT", -4, -2)
     liste:SetWidth(250)
     liste:SetFrameStrata("MEDIUM") -- au-dessus des quêtes qui défilent (le suivi est en LOW)
-    liste:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
-    liste:SetBackdropColor(0.04, 0.04, 0.06, 1)
-    liste:SetBackdropBorderColor(0.66, 0.56, 1.00, 0.5)
     liste:EnableMouse(true)
     liste:Hide()
     liste.lignes = {}
@@ -911,8 +905,7 @@ local function ouvrirSuivi()
           l:SetPoint("TOPLEFT", 6, -4 - (i - 1) * 18)
           l:SetPoint("RIGHT", -6, 0)
           l:SetNormalFontObject("GameFontHighlightSmall")
-          l:SetHighlightTexture("Interface\\Buttons\\WHITE8x8")
-          l:GetHighlightTexture():SetVertexColor(0.66, 0.56, 1.00, 0.2)
+          l:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD") -- le survol des menus du jeu
           l:SetText(" ")
           l:GetFontString():ClearAllPoints()
           l:GetFontString():SetPoint("LEFT", 14, 0)
@@ -1057,7 +1050,7 @@ local function inviter(guid)
   redessiner()
 end
 local COLONNES = {
-  { key = "nom", title = "Membre", w = 180, get = function(m) return m.nom end },
+  { key = "nom", title = "Membre", w = 180, extensible = true, get = function(m) return m.nom end },
   { key = "presence", title = "Présence", w = 80, get = function(m) return m.presence end,
     fmt = function(v) return (v == "présent" and "|cff59cc73" or "|cff999999") .. v .. "|r" end },
   -- Retirer un membre ; Inviter un joueur du groupe qui n'est pas membre (#23), « Invité… » en attendant sa réponse.
@@ -1068,7 +1061,7 @@ local COLONNES = {
     click = function(m) if m.invitable then inviter(m.guid) else ns.retirer(e, moi(), m.guid, jeu) end end },
 }
 local COLONNES_ECARTEES = {
-  { key = "titre", title = "Quête écartée", w = 180, get = function(l) return l.titre end },
+  { key = "titre", title = "Quête écartée", w = 180, extensible = true, get = function(l) return l.titre end },
   { key = "par", title = "Par", w = 80, get = function(l) return l.par end },
   { key = "remettre", w = 80, button = function() return "Remettre" end, click = function(l) decider(l.quete, false) end },
 }
@@ -1121,7 +1114,7 @@ local function ouvrir()
     f:SetWidth(largeur + 50)
     vide = panneaux[1]:CreateFontString("CompagnieVide", "OVERLAY", "GameFontHighlight")
     vide:SetPoint("TOPLEFT", 14, -70)
-    vide:SetWidth(largeur)
+    vide:SetPoint("TOPRIGHT", -14, -70)
     vide:SetJustifyH("LEFT")
     vide:SetText("Pas de Compagnie. Dans un groupe du jeu, « Fonder » la propose à chaque personnage du groupe ; " ..
       "elle a de 2 à 5 membres.")
@@ -1133,7 +1126,7 @@ local function ouvrir()
     tableauEcartees = AC.Tableau(panneaux[2], COLONNES_ECARTEES, { name = "ecartees", bottom = 44 })
     videEcartees = panneaux[2]:CreateFontString("CompagnieEcarteesVide", "OVERLAY", "GameFontHighlight")
     videEcartees:SetPoint("TOPLEFT", 14, -70)
-    videEcartees:SetWidth(largeur)
+    videEcartees:SetPoint("TOPRIGHT", -14, -70)
     videEcartees:SetJustifyH("LEFT")
     videEcartees:SetText("Aucune quête écartée. Pour écarter une quête : clic droit sur elle dans le suivi ou la liste " ..
       "À faire.")
@@ -1263,10 +1256,7 @@ local function bandeauAbandon(which, nom)
   local id = C_QuestLog.GetAbandonQuest and C_QuestLog.GetAbandonQuest()
   if not (fenetre and effetAbandon(id) == "ecarter") then if b then b:Hide() end return end
   if not b then
-    b = CreateFrame("Frame", "CompagnieBandeauAbandon", fenetre, "BackdropTemplate")
-    b:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
-    b:SetBackdropColor(0.25, 0.05, 0.05, 0.95)
-    b:SetBackdropBorderColor(1, 0.3, 0.2, 0.8)
+    b = CreateFrame("Frame", "CompagnieBandeauAbandon", fenetre, "TooltipBackdropTemplate")
     b.texte = b:CreateFontString("CompagnieBandeauAbandonTexte", "OVERLAY", "GameFontNormal")
     b.texte:SetPoint("TOPLEFT", 10, -8)
     b.texte:SetJustifyH("LEFT")

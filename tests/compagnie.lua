@@ -1631,3 +1631,38 @@ test("quête à prendre soi-même (#6) : « Va voir » le PNJ relevé par Léo ;
     eteindre()
     if not ok then error(err, 0) end
 end)
+
+test("fenêtres du socle (#31) : la Compagnie s'agrandit, colonne Membre extensible ; listes près de la minicarte sans poignée, à leur place", function()
+    fabriquer({ guid = LEO, nom = "Léo Lame" })
+    SlashCmdList.COMPAGNIE("")
+    local f = CompagnieFrame
+    assertNotNil(f.ResizeButton, "la fenêtre de la Compagnie a sa poignée")
+    local function celluleNom()
+        local function chercher(p)
+            for _, c in ipairs({ p:GetChildren() }) do
+                if c.item and c:IsVisible() then return c.cells[1] end
+                local r = chercher(c)
+                if r then return r end
+            end
+        end
+        return chercher(f)
+    end
+    local avant = celluleNom():GetWidth()
+    f:SetSize(f:GetWidth() + 120, f:GetHeight() + 60)
+    SlashCmdList.COMPAGNIE("") -- redessinée (dans le simulateur, OnSizeChanged n'arrive qu'à l'image suivante)
+    assertTrue(celluleNom():GetWidth() >= avant + 119, "la colonne Membre prend la largeur gagnée : " .. avant .. " → " .. celluleNom():GetWidth())
+    f:Hide()
+    CompagnieDB.compagnie = nil
+    -- Les deux listes près de la minicarte (créées par les tests d'avant) : pas de poignée, place par défaut.
+    for _, l in ipairs({ CompagnieAFaireFrame, CompagnieSuiviFrame }) do
+        assertNil(l.ResizeButton, l:GetName() .. " : pas de poignée")
+    end
+    assertEquals(Minimap, select(2, CompagnieAFaireFrame:GetPoint(1)), "À faire : à gauche de la minicarte")
+    -- Glisser le suivi par une de ses lignes retient sa place (pas sa taille, qui suit le contenu).
+    AzerothCommuneDB.fenetres = AzerothCommuneDB.fenetres or {}
+    AzerothCommuneDB.fenetres.CompagnieSuiviFrame = nil
+    CompagnieSuiviLigne1:GetScript("OnDragStop")(CompagnieSuiviLigne1)
+    local g = AzerothCommuneDB.fenetres.CompagnieSuiviFrame
+    assertTrue(g and g.x and g.y and not g.w, "place retenue, sans taille")
+    AzerothCommuneDB.fenetres.CompagnieSuiviFrame = nil
+end)
