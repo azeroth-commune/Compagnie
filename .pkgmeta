@@ -5,4 +5,5 @@ ignore:
   - docs
   - CLAUDE.md
   - CONTEXT.md
-# ponytail: required-dependencies azeroth-commune à remettre quand le socle est validé (CurseForge refuse un slug non validé, erreur 1018)
+required-dependencies:
+  - azeroth-commune
