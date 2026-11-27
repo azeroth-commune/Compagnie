@@ -768,28 +768,21 @@ assert(echanges(c.aFaire) == "donner:Mira:1:Léo donner:Virgile:5:Léo recevoir:
 -- Le stock part avec l'objectif fini, au-delà du total seulement ; reçu tel quel ; un stock sur un objectif pas fini, rejeté.
 local recuS = ns.decoder(ns.encoder({ niveau = 5, quetes = { [7] = stock(8, 13), [8] = stock(5, 5) }, rendues = {} }))
 assert(recuS.quetes[7].objectifs[1].stock == 13 and recuS.quetes[8].objectifs[1].stock == nil, "le stock au-delà du total")
-assert(ns.decoder("5#7:0:5/8/9#############") == nil and ns.decoder("5#7:1:8/8/8#############") == nil
-  and ns.decoder("5#7:1:8/8/9#############").quetes[7].objectifs[1].stock == 9, "stock : fini et au-delà du total")
+assert(ns.decoder("5#7:0:5/8/9############") == nil and ns.decoder("5#7:1:8/8/8############") == nil
+  and ns.decoder("5#7:1:8/8/9############").quetes[7].objectifs[1].stock == 9, "stock : fini et au-delà du total")
 
--- Le texte exact des objectifs n'est pas envoyé (code de grammaire du jeu « |4… ; ») : les nombres et le nom de chaque
--- objectif (15e champ), qu'affiche un membre qui n'a pas la quête.
+-- Le texte des objectifs n'est jamais envoyé (code de grammaire du jeu « |4… ; ») : seulement les nombres.
 local avecTexte = { niveau = 12, quetes = { [7] = { finie = false, objectifs = {
-  { texte = "Raptor flagellant : \1 |4personnage tué:personnages tués;", fait = 2, total = 10 },
-  { texte = "Croc : de | raptor", fait = 0, total = 3 }, { texte = "Sauvetage de Kernobee", fait = 0, total = 1 } } } }, rendues = {} }
-assert(not ns.encoder(avecTexte):find("|4", 1, true), "le code de grammaire n'est pas envoyé")
-local recuT = ns.decoder(ns.encoder(avecTexte)).quetes[7].objectifs
-assert(recuT[1].fait == 2 and recuT[1].texte == "Raptor flagellant", "les nombres et le nom : " .. tostring(recuT[1].texte))
-assert(recuT[2].texte == nil and recuT[3].texte == "Sauvetage de Kernobee", "un nom hors des règles ne part pas, les autres si")
-assert(ns.libelle("Kobold Vermin slain: 3/10") == "Kobold Vermin slain" and ns.libelle("Patte de loup : 5/8") == "Patte de loup"
-  and ns.libelle(nil) == nil and ns.libelle(" 3/8 ") == nil, "le nom d'un objectif")
-assert(ns.decoder("35#7:0:1/2#############7=a/b/c") == nil and ns.decoder("35#7:0:1/2#############8=a") == nil
-  and ns.decoder("35#7:0:1/2#############7=a;7=b") == nil and ns.decoder("35#7:0:1/2#############7=a|b") == nil
-  and ns.decoder("35#7:0:1/2#############7=a").quetes[7].objectifs[1].texte == "a",
-  "les noms : rejetés en trop, pour une quête absente, deux fois, ou hors des règles")
+  { texte = "Raptor flagellant : 2/10 |4personnage tué:personnages tués;", fait = 2, total = 10 } } } }, rendues = {} }
+assert(not ns.encoder(avecTexte):find("Raptor", 1, true), "le texte n'est pas envoyé")
+assert(ns.decoder(ns.encoder(avecTexte)).quetes[7].objectifs[1].fait == 2, "les nombres le sont")
+assert(ns.libelle("Raptor flagellant : \1 |4personnage tué:personnages tués;") == "Raptor flagellant"
+  and ns.libelle("Kobold Vermin slain: 3/10") == "Kobold Vermin slain" and ns.libelle("Patte de loup : 5/8") == "Patte de loup"
+  and ns.libelle(nil) == nil and ns.libelle(" 3/8 ") == nil, "le nom d'un objectif (les plaques)")
 
 -- Les champs ajoutés après le 10e, vides : APRES_ZONE, ceux après la zone de la Compagnie (#27 : les prérequis
 -- manquants) ; FIN, tous (#24 : la zone, puis APRES_ZONE). Un état à 10 champs + FIN est complet.
-local APRES_ZONE = "####" -- #27 : les prérequis manquants ; #23 : la liste des membres ; #6 : les origines ; les noms des objectifs
+local APRES_ZONE = "###" -- #27 : les prérequis manquants ; #23 : la liste des membres ; #6 : les origines
 local FIN = "#" .. APRES_ZONE
 -- Lecture stricte : un champ mal formé, et tout l'état est rejeté (jamais exécuté ni interprété). Un seul format (bêta) :
 -- un état à quatre champs (celui de #13, sans abandons) est rejeté aussi.
@@ -897,9 +890,8 @@ for i = 1, 5 do plein.liste.membres[i] = { guid = "Player-4395-0A1B2C3" .. i, no
 local idC = "Player-4395-0A1B2C3D-1764000000"
 local parts = ns.morceaux(idC, ns.encoder(plein), 99)
 assert(#parts >= 1 and #parts <= 10, "le pire cas réaliste tient : " .. #parts .. " morceaux, " .. #ns.encoder(plein) .. " octets")
--- Les noms des objectifs puis les origines (#6) remplissent la place qui reste : toutes les quêtes non partageables,
--- relevées avec un PNJ au nom long, le pire cas tient toujours, avec les premiers noms (une origine a la base des quêtes
--- pour repli).
+-- Les origines (#6) remplissent la place qui reste : toutes les quêtes non partageables, relevées avec un PNJ au nom
+-- long, le pire cas tient toujours, avec les premières origines.
 local avecToutes = {}
 for k, v in pairs(plein) do avecToutes[k] = v end
 avecToutes.quetes = {}
@@ -909,11 +901,7 @@ for id, q in pairs(plein.quetes) do
 end
 local n = #ns.morceaux(idC, ns.encoder(avecToutes), 99)
 local recu = assert(ns.decoder(ns.encoder(avecToutes)), "le pire cas avec origines se décode")
-assert(n >= 1 and n <= 10 and recu.quetes[90001].objectifs[1].texte == "Raptor flagellant",
-  "le pire cas avec origines tient : " .. n .. " morceaux, le 1er nom part")
-local leger = { niveau = 12, quetes = { [7] = avecToutes.quetes[90001] }, rendues = {} }
-local recuL = ns.decoder(ns.encoder(leger)).quetes[7]
-assert(recuL.origine and recuL.objectifs[1].texte, "un journal léger : noms et origines partent")
+assert(n >= 1 and n <= 10 and recu.quetes[90001].origine, "le pire cas avec origines tient : " .. n .. " morceaux, la 1re origine part")
 print(("Compagnie : pire cas réaliste, %d octets, %d morceaux sur 10"):format(#ns.encoder(plein), #parts))
 
 -- Écarter, Remettre (#21) : une décision datée de la Compagnie. Les décisions reçues avec un état : la plus récente
@@ -959,11 +947,11 @@ assert(ns.decoder("12#########148:" .. (100000 + 86401) .. ":Léo" .. APRES_ZONE
 local avecPrerequis = { niveau = 12, quetes = {}, rendues = {}, ecartees = {}, avant = {}, renduesAvant = {},
   prerequis = { zone = 148, manquants = { { quete = 952, prerequis = 940 }, { quete = 2050, prerequis = 2052 } } } }
 corps = ns.encoder(avecPrerequis)
-assert(corps:find("##148=952:940,2050:2052###$"), "les prérequis, en 12e champ : " .. corps)
+assert(corps:find("##148=952:940,2050:2052##$"), "les prérequis, en 12e champ : " .. corps)
 assert(pareil(ns.decoder(corps), avecPrerequis), "avec les prérequis : identique (" .. corps .. ")")
 avecPrerequis.prerequis.manquants = {}
 corps = ns.encoder(avecPrerequis)
-assert(corps:find("##148###$") and pareil(ns.decoder(corps), avecPrerequis), "rien ne manque, la zone couverte : " .. corps)
+assert(corps:find("##148##$") and pareil(ns.decoder(corps), avecPrerequis), "rien ne manque, la zone couverte : " .. corps)
 for _, f in ipairs({ "x", "0", "148=", "148=952", "148=952:", "148=a:940", "148=952:940,", "148:952:940", "=952:940",
   "148=" .. ("1:2,"):rep(8) .. "1:2" }) do
   assert(ns.decoder("12##########" .. f .. "##") == nil, "prérequis rejetés : " .. f)
@@ -1005,13 +993,13 @@ local avecOrigines = { niveau = 12, rendues = {}, ecartees = {}, avant = {}, ren
 } }
 corps = ns.encoder(avecOrigines)
 assert(corps:find("^12#7:0n;8:1n;9:0n;10:0n#"), "non partageable : n — " .. corps)
-assert(corps:find("#7=Maréchal Dughan@1429:42:65;8@1436:0:100;9=Gryan Stoutmantle#$"), "les origines, en 14e champ : " .. corps)
+assert(corps:find("#7=Maréchal Dughan@1429:42:65;8@1436:0:100;9=Gryan Stoutmantle$"), "les origines, en 14e champ : " .. corps)
 assert(pareil(ns.decoder(corps), avecOrigines), "avec les origines : identique (" .. corps .. ")")
 -- Une position hors carte (relevée au bord) ne part pas : le reste de l'état, et le PNJ, restent lisibles.
 corps = ns.encoder({ niveau = 2, quetes = { [7] = { finie = false, objectifs = {}, partageable = false,
   origine = { nom = "Dughan", carte = 1429, x = 101, y = -1 } }, [8] = { finie = false, objectifs = {}, partageable = false,
   origine = { carte = 1429, x = 4.5, y = 5 } } } })
-assert(corps:find("#7=Dughan#$") and ns.decoder(corps), "position hors carte : pas envoyée — " .. corps)
+assert(corps:find("#7=Dughan$") and ns.decoder(corps), "position hors carte : pas envoyée — " .. corps)
 -- L'origine d'une quête partageable ne part pas.
 assert(ns.encoder({ niveau = 2, quetes = { [7] = { finie = false, objectifs = {}, partageable = true, origine = { nom = "Dughan" } } } })
   == "2#7:0########" .. FIN, "partageable : pas d'origine")
@@ -1019,9 +1007,9 @@ assert(ns.encoder({ niveau = 2, quetes = { [7] = { finie = false, objectifs = {}
 -- position ; un nom comme une zone, sans « @ » ; une position entière, x et y de 0 à 100).
 for _, f in ipairs({ "8=Dughan", "6=Dughan", "7=Dughan;7=Dughan", "7", "7=", "7@", "7=@1:2:3", "7Dughan", "7=a|b", "7=a@b@1:2:3",
   "7@1:2", "7@1:2:3:4", "7@0:2:3", "7@1:101:3", "7@1:2:-3", "7@x:2:3", "7=" .. ("x"):rep(49), "7=Dughan;" }) do
-  assert(ns.decoder("12#6:0;7:0n############" .. f .. "#") == nil, "origine rejetée : " .. f:sub(1, 20))
+  assert(ns.decoder("12#6:0;7:0n############" .. f) == nil, "origine rejetée : " .. f:sub(1, 20))
 end
-assert(ns.decoder("12#6:0;7:0n############7=Dughan@1:2:3#"), "bien formée : acceptée")
+assert(ns.decoder("12#6:0;7:0n############7=Dughan@1:2:3"), "bien formée : acceptée")
 for _, q in ipairs({ "7:0x", "7:0nn", "7:0np", "7:n", "7:2" }) do assert(ns.decoder("12#" .. q .. "########" .. FIN) == nil, "drapeau rejeté : " .. q) end
 
 -- La zone de chaque quête (#13 : l'en-tête de zone de mon journal) part avec l'état : encodage puis décodage → identique.
@@ -1235,7 +1223,7 @@ assert(#partis == 4, "sans Compagnie : rien")
 local avecListe = { niveau = 12, quetes = {}, rendues = {}, ecartees = {}, avant = {}, renduesAvant = {},
   liste = { date = 1764000000, membres = { { guid = "Player-4395-0A1B2C3D", nom = "Virgile Marteau" }, { guid = "Player-4395-0A1B2C3E", nom = "Léo Lame" } } } }
 corps = ns.encoder(avecListe)
-assert(corps:find("#1764000000=4395%-0A1B2C3D:Virgile Marteau,4395%-0A1B2C3E:Léo Lame##$"), "la liste, en 13e champ : " .. corps)
+assert(corps:find("#1764000000=4395%-0A1B2C3D:Virgile Marteau,4395%-0A1B2C3E:Léo Lame#$"), "la liste, en 13e champ : " .. corps)
 assert(pareil(ns.decoder(corps), avecListe), "avec la liste : identique (" .. corps .. ")")
 for _, f in ipairs({ "x", "1764000000", "1764000000=", "1764000000=1-A:Léo", "1764000000=1-A:Léo,1-A:Mira", "1764000000=1-A:,1-B:Mira",
   "1764000000=1-A:L|o,1-B:Mira", "1764000000=Player-1-A:Léo,1-B:Mira", "=1-A:Léo,1-B:Mira",

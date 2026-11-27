@@ -11,9 +11,8 @@
 --             zoneCompagnie = { zone = areaID, date, par = "Léo" } (#24 : la zone de la Compagnie, nil sans choix),
 --             prerequis = { zone = areaID, manquants = { { quete, prerequis }, … } } (#27 : mes prérequis manquants),
 --             liste = { date, membres = { { guid, nom }, … } } (#23 : la liste des membres) }
--- Le texte exact des objectifs ne part pas (il porte un code de grammaire du jeu, « |4…; ») : les nombres, dans l'ordre
--- des objectifs, et leur nom (ns.libelle : « Raptor flagellant », sans compte ni code) dans le 15e champ ; un membre qui
--- n'a pas la quête l'affiche avec ce nom, au lieu de « Objectif 1 » (Calcul.lua prend le texte chez qui l'a).
+-- Le texte des objectifs ne part jamais (il porte un code de grammaire du jeu, « |4…; ») : seulement les nombres, dans
+-- l'ordre des objectifs ; chacun retrouve le texte dans le jeu, même pour une quête hors de son journal (Compagnie.lua).
 -- Corps encodé : « niveau[:race:classe]#quête;quête…#rendue,rendue…#zone=id,id;zone=id…#écartée;écartée…#auberge#liaison#fin
 -- #avant,avant…#renduesAvant,renduesAvant…#zone:date:par#zone=quête:prérequis,…#date=serveur-id:nom,… »,
 -- une quête « id:finie(0|1)[p][n][:fait/total[/stock]…] » (stock : un objet échangeable que j'ai au-delà du total, objectif fini) (p : marquée personnelle, #7 ; n : non partageable, #6 ; partageable
@@ -39,9 +38,7 @@
 -- ns.MAX membres, vide hors d'une Compagnie. Le 14e (#6) : où j'ai pris mes quêtes non partageables, « id=PNJ@carte:x:y;… »
 -- (le PNJ quand je l'ai acceptée, ou rien pour l'objet ramassé qui la lance ; ma position, sans « @… » dans une instance ;
 -- au moins l'un des deux ; le nom, mêmes règles qu'une zone, sans « @ » ; x et y de 0 à 100), ids triés. Il passe en
--- dernier : les origines remplissent la place qui reste dans MAX_MORCEAUX (PLACE), les suivantes ne partent pas. Le 15e :
--- le nom de mes objectifs, « id=nom/nom…;… » (un nom vide quand il ne tient pas les règles d'une zone, ids triés), servi
--- avant les origines dans la même place qui reste.
+-- dernier : les origines remplissent la place qui reste dans MAX_MORCEAUX (PLACE), les suivantes ne partent pas.
 -- Messages d'add-on (préfixe Compagnie) : « E;idCompagnie;envoi/i/n;morceau » (un état en n morceaux bornés à 255
 -- octets) et « D;idCompagnie » (demande d'état). L'expéditeur (de) est le GUID que Compagnie.lua tient du serveur.
 -- Donnée reçue entre membres (CONTEXT-MAP) : servie telle quelle, mais lue strictement (un champ mal formé et tout l'état
@@ -152,18 +149,7 @@ function ns.encoder(etat)
     table.concat(parZone, ";") .. "#" .. table.concat(ecartees, ";") .. "#" ..
     (zoneValide(etat.auberge) and etat.auberge or "") .. "#" .. (etat.liaison or "") .. "#" .. (etat.finRecharge or "") ..
     "#" .. table.concat(avant, ",") .. "#" .. table.concat(trier(etat.renduesAvant), ",") .. "#" .. decision(etat.zoneCompagnie, "zone") .. "#" .. prerequis(etat.prerequis) .. "#" .. listeMembres(etat.liste)
-  local noms, place = {}, PLACE - #corps - 2
-  for _, id in ipairs(trier(etat.quetes)) do
-    local t, un = {}, false
-    for k, o in ipairs(etat.quetes[id].objectifs or {}) do
-      local n = ns.libelle(o.texte)
-      t[k] = zoneValide(n) and n or ""
-      un = un or t[k] ~= ""
-    end
-    local x = un and id .. "=" .. table.concat(t, "/")
-    if x and #x < place then noms[#noms + 1], place = x, place - #x - 1 end
-  end
-  local origines = {}
+  local origines, place = {}, PLACE - #corps - 1
   for _, id in ipairs(trier(etat.quetes)) do
     local q = etat.quetes[id]
     local o = q.partageable == false and q.origine or {}
@@ -173,14 +159,14 @@ function ns.encoder(etat)
       place = place - #origines[#origines] - 1
     end
   end
-  return corps .. "#" .. table.concat(origines, ";") .. "#" .. table.concat(noms, ";")
+  return corps .. "#" .. table.concat(origines, ";")
 end
 
 -- L'état, ou nil au moindre champ mal formé. maintenant : mon heure serveur (nil : pas de contrôle des dates, les tests
 -- du format).
 function ns.decoder(corps, maintenant)
   local f = couper(corps, "#")
-  local n, rc, race, classe = (#f == 15 and f[1] or ""):match("^(%d+)(:?(%d*):?(%d*))$")
+  local n, rc, race, classe = (#f == 14 and f[1] or ""):match("^(%d+)(:?(%d*):?(%d*))$")
   local niveau = n and entier(n, 200)
   race, classe = race and entier(race, 999), classe and entier(classe, 999)
   if not niveau or niveau < 1 or rc ~= "" and not (race and classe and rc == ":" .. race .. ":" .. classe) then return end
@@ -284,19 +270,6 @@ function ns.decoder(corps, maintenant)
     if not (q and q.partageable == false and not q.origine) or (egal == "") ~= (nom == "") or nom ~= "" and not nomValide(nom)
       or pos ~= "" and not (carte and carte >= 1 and px and py) or nom == "" and pos == "" then return end
     q.origine = { nom = nom ~= "" and nom or nil, carte = carte, x = px, y = py }
-  end
-  local nommees = {}
-  for _, x in ipairs(f[15] == "" and {} or couper(f[15], ";")) do
-    local id, liste = x:match("^(%d+)=(.+)$")
-    id = id and entier(id, 2147483647)
-    local q = id and etat.quetes[id]
-    local t = q and couper(liste, "/") or {}
-    if not q or nommees[id] or #t > #q.objectifs then return end
-    nommees[id] = true
-    for k, n in ipairs(t) do
-      if n ~= "" and not zoneValide(n) then return end
-      q.objectifs[k].texte = n ~= "" and n or nil -- un nom, sans compte : affiché « nom : 2/10 »
-    end
   end
   return etat
 end

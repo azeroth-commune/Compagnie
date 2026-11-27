@@ -372,10 +372,31 @@ end
 -- La base des quêtes du socle (souscrite au chargement) : { [id] = { nom, zone, suites, … } }, vide tant qu'elle manque.
 local function base() return (AC:Lire("base des quêtes")) or {} end
 -- Le calcul de la Compagnie.
+-- Le texte d'un objectif qui manque (une quête que je n'ai pas : il ne part pas avec les états) : le jeu le donne aussi
+-- pour une quête hors de mon journal (relevé du 28/11 : GetQuestObjectives(92517), quête de l'autre membre seulement →
+-- « Bandit des hautes-terres : 0/10 |4…; »). Les objectifs à part sont ceux du dernier état connu : copiés, pas touchés.
+local function nommer(calc)
+  local function remplir(id, objectifs)
+    local jeu, copie = nil, {}
+    for i, o in ipairs(objectifs) do
+      copie[i] = o
+      if not o.texte then
+        jeu = jeu or C_QuestLog.GetQuestObjectives(id) or {}
+        local g = jeu[i]
+        if g then copie[i] = { fait = o.fait, total = o.total, stock = o.stock, texte = gabarit(g.text, g.numFulfilled, g.numRequired) } end
+      end
+    end
+    return copie
+  end
+  for id, q in pairs(calc.quetes) do q.objectifs = remplir(id, q.objectifs) end
+  for _, a in ipairs(calc.aPart) do a.objectifs = remplir(a.quete, a.objectifs) end
+end
 local function calculer()
   local liste, presents, unites = membresDuJeu()
   local zc = e.db.zoneCompagnie
-  return ns.calculer(liste, GetServerTime(), e.db.ecartees, base(), zc and zc.zone, e.db.niveauxRequis), presents, unites
+  local calc = ns.calculer(liste, GetServerTime(), e.db.ecartees, base(), zc and zc.zone, e.db.niveauxRequis)
+  nommer(calc)
+  return calc, presents, unites
 end
 local function titre(id)
   local q = titres[id] or C_QuestLog.GetTitleForQuestID(id)
