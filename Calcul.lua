@@ -1,7 +1,8 @@
 -- Compagnie, le calcul de la Compagnie : une fonction pure, sans aucun appel à l'API du jeu (vérifié par check.lua).
 -- Entrée : la liste des membres, chacun avec son état (dernier état connu pour un absent) :
 --   { nom = "Léo", niveau = 10, race = 1, classe = 2 (raceID, classID du jeu ; nil : inconnues), absent = true,
---     quetes = { [idQuête] = { finie = false, objectifs = { { texte = "Patte de loup", fait = 5, total = 8 }, … } } },
+--     quetes = { [idQuête] = { finie = false, objectifs = { { texte = "Patte de loup", fait = 5, total = 8,
+--       stock = 11 (objet échangeable dans ses sacs, nil sauf au-delà du total) }, … } } },
 --     avant = { [idQuête] = true } (ses quêtes d'avant, #20 : dans son journal à son entrée dans la Compagnie),
 --     rendues = { [idQuête] = true } (rendues depuis son entrée), renduesAvant = { [idQuête] = true } (avant),
 --     auberge = "Comté-de-l'Or", liaison = 1764000000, finRecharge = 1764002400 } (heures serveur ; nil : inconnu, ou
@@ -30,7 +31,9 @@
 --                      { type = "prendre", membre = "Léo", quete = id, donneur = { nom, carte, x, y } ou nil,
 --                        objet = { id, nom, pnjs, objets, ramasse = { carte, x, y } ou nil } ou nil },
 --                      { type = "prerequis", membre = "Léo", quete = id, prerequis = id, chaine, zone, donneur, manquants,
---                        tous, aControler } },
+--                        tous, aControler },
+--                      { type = "donner", membre = "Virgile", quete = id, texte, nombre = 3, a = "Léo" },
+--                      { type = "recevoir", membre = "Léo", quete = id, texte, nombre = 3, de = "Virgile" } },
 --           aControler = { "Mira" } }
 -- Une quête personnelle (#7) : le jeu interdit à un autre membre de la prendre (classes, races de la base des quêtes ;
 -- un membre de race ou de classe inconnue peut : rien n'est deviné), ou un membre qui l'a l'a marquée personnelle ; elle
@@ -151,6 +154,43 @@ end
 -- après l'entrée (rendues, pas renduesAvant) fait une quête en avance.
 -- Rend aussi les membres à contrôler (#27) : ceux dont l'état ne couvre pas la zone de la Compagnie (absent depuis le
 -- choix, jamais entendu) ; on ne sait pas ce qui leur manque, on ne leur prête rien.
+-- Objets à donner : pour un objectif d'objet échangeable (stock : ce que le membre en a dans ses sacs, envoyé seulement
+-- au-delà du total), quand la Compagnie en a assez pour que tous finissent, qui donne combien à qui : un « donner » chez
+-- celui qui en a de trop, un « recevoir » chez celui à qui il en manque. ont : les membres qui ont la quête (tous ceux
+-- qui ne l'ont pas rendue). ponytail: rien quand il n'y en a pas assez pour tous ; un partage partiel viendra si on le demande.
+local function aDonner(t, id, ont)
+  local n = 0
+  for _, x in ipairs(ont) do n = math.max(n, #(x.q.objectifs or {})) end
+  for i = 1, n do
+    local donneurs, receveurs, surplus, besoin = {}, {}, 0, 0
+    for _, x in ipairs(ont) do
+      local o = x.q.objectifs and x.q.objectifs[i]
+      if not o then besoin = math.huge -- objectif pas encore chargé chez lui : on ne sait pas
+      elseif o.fait < o.total then
+        receveurs[#receveurs + 1] = { nom = x.nom, n = o.total - o.fait, texte = o.texte }
+        besoin = besoin + o.total - o.fait
+      elseif (o.stock or 0) > o.total then
+        donneurs[#donneurs + 1] = { nom = x.nom, n = o.stock - o.total, texte = o.texte }
+        surplus = surplus + o.stock - o.total
+      end
+    end
+    if besoin > 0 and surplus >= besoin then
+      local d = 1
+      for _, r in ipairs(receveurs) do
+        while r.n > 0 do
+          local g = donneurs[d]
+          local k = math.min(g.n, r.n)
+          local texte = g.texte or r.texte
+          t[#t + 1] = { type = "donner", membre = g.nom, quete = id, texte = texte, nombre = k, a = r.nom }
+          t[#t + 1] = { type = "recevoir", membre = r.nom, quete = id, texte = texte, nombre = k, de = g.nom }
+          g.n, r.n = g.n - k, r.n - k
+          if g.n == 0 then d = d + 1 end
+        end
+      end
+    end
+  end
+end
+
 function ns.ecarts(membres, foyer, communes, ecartees, base, zone, appris)
   local t, rendues, aPrendre = {}, {}, {} -- aPrendre : [id] = la première origine relevée, ou false
   for _, m in ipairs(membres) do
@@ -212,6 +252,14 @@ function ns.ecarts(membres, foyer, communes, ecartees, base, zone, appris)
         zone = base[x.prerequis].zone, donneur = base[chaine[1]].donneur, manquants = noms, tous = #noms == #membres,
         aControler = aControler }
     end
+  end
+  for id in pairs(communes) do
+    local ont, tous = {}, true
+    for _, m in ipairs(membres) do
+      local q = m.quetes and m.quetes[id]
+      if q then ont[#ont + 1] = { nom = m.nom, q = q } elseif not rendue(m, id) then tous = false end
+    end
+    if tous then aDonner(t, id, ont) end
   end
   table.sort(t, function(a, b)
     if a.quete ~= b.quete then return (a.quete or 0) < (b.quete or 0) end

@@ -16,7 +16,7 @@
 -- n'a pas la quête l'affiche avec ce nom, au lieu de « Objectif 1 » (Calcul.lua prend le texte chez qui l'a).
 -- Corps encodé : « niveau[:race:classe]#quête;quête…#rendue,rendue…#zone=id,id;zone=id…#écartée;écartée…#auberge#liaison#fin
 -- #avant,avant…#renduesAvant,renduesAvant…#zone:date:par#zone=quête:prérequis,…#date=serveur-id:nom,… »,
--- une quête « id:finie(0|1)[p][n][:fait/total…] » (p : marquée personnelle, #7 ; n : non partageable, #6 ; partageable
+-- une quête « id:finie(0|1)[p][n][:fait/total[/stock]…] » (stock : un objet échangeable que j'ai au-delà du total, objectif fini) (p : marquée personnelle, #7 ; n : non partageable, #6 ; partageable
 -- ne part pas, le jeu ne le dit que pour mes quêtes), ids triés. Le 4e champ (#13) range les quêtes par zone (l'en-tête de zone de mon journal), zones triées ; vide si
 -- aucune quête n'a de zone. Une zone : 1 à MAX_ZONE octets, ni caractère de contrôle, ni « | » (codes du chat), ni
 -- séparateur du format ; un en-tête de mon journal qui ne l'est pas ne part pas (la quête part sans zone). Le 5e champ
@@ -125,7 +125,9 @@ function ns.encoder(etat)
   for _, id in ipairs(trier(etat.quetes)) do
     local q = etat.quetes[id]
     local t = { id, (q.finie and 1 or 0) .. (q.personnelle and "p" or "") .. (q.partageable == false and "n" or "") }
-    for _, o in ipairs(q.objectifs or {}) do t[#t + 1] = o.fait .. "/" .. o.total end
+    for _, o in ipairs(q.objectifs or {}) do
+      t[#t + 1] = o.fait .. "/" .. o.total .. ((o.stock or 0) > o.total and o.fait == o.total and "/" .. o.stock or "")
+    end
     quetes[#quetes + 1] = table.concat(t, ":")
     if zoneValide(q.zone) then zones[q.zone] = zones[q.zone] or {}; table.insert(zones[q.zone], id) end
   end
@@ -192,10 +194,10 @@ function ns.decoder(corps, maintenant)
     if not id or id < 1 or etat.quetes[id] or not finie or #c - 2 > MAX_OBJECTIFS then return end
     local objectifs = {}
     for k = 3, #c do
-      local a, b = c[k]:match("^(%d+)/(%d+)$")
-      a, b = a and entier(a, 99999), b and entier(b, 99999)
-      if not (a and b) or a > b then return end
-      objectifs[k - 2] = { fait = a, total = b }
+      local a, b, s = c[k]:match("^(%d+)/(%d+)/?(%d*)$")
+      a, b, s = a and entier(a, 99999), b and entier(b, 99999), s ~= "" and entier(s, 99999) or nil
+      if not (a and b) or a > b or s and (a < b or s <= b) then return end
+      objectifs[k - 2] = { fait = a, total = b, stock = s }
     end
     etat.quetes[id] = { finie = finie == "1", personnelle = perso == "p" or nil, objectifs = objectifs }
     if np == "n" then etat.quetes[id].partageable = false end

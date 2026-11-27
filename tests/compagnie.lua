@@ -292,7 +292,7 @@ local function avecJournal(quetes, f)
     q.GetQuestObjectives = function(id)
         local t = {}
         for k, o in ipairs(parId[id] and parId[id].objectifs or {}) do
-            t[k] = { text = o[1], numFulfilled = o[2], numRequired = o[3], finished = tonumber(o[2]) == o[3] }
+            t[k] = { text = o[1], numFulfilled = o[2], numRequired = o[3], finished = tonumber(o[2]) == o[3], type = o[4] }
         end
         return t
     end
@@ -867,6 +867,46 @@ test("la liste À faire se dessine avec ses boutons ; aucun abandon sans un clic
             end)
         end)
     end)
+    eteindre()
+end)
+
+test("objets à donner : la Compagnie en a assez, qui donne combien à qui ; le clic ouvre l'échange", function()
+    local info, compte, echange = C_Item.GetItemInfo, C_Item.GetItemCount, InitiateTrade
+    local echanges = {}
+    C_Item.GetItemInfo = function(nom) if nom == "Patte de loup" then return nom, nil, 1, 1, 1, "", "", 20, "", 0, 0, 12, 0, 0 end end
+    C_Item.GetItemCount = function(nom) return nom == "Patte de loup" and 13 or 0 end
+    InitiateTrade = function(u) echanges[#echanges + 1] = u end
+    local p = pattes(8)
+    p.objectifs[1][4] = "item"
+    avecJournal({ p }, function()
+        fabriquer({ guid = LEO, nom = "Léo Lame" })
+        CompagnieDB.modeCompagnie = nil
+        CompagnieDB.etats = { [LEO] = { niveau = 5, rendues = {}, quetes = { [1001] = { finie = false, objectifs = { { fait = 3, total = 8 } } } } } }
+        avecLeo(function(envoyes)
+            charger()
+            evenement("GROUP_ROSTER_UPDATE")
+            local b = assert(bouton("CompagnieSuiviAFaire1"), "un bouton À faire")
+            assertEquals("Donne 5 Patte de loup à Léo", b:GetText())
+            assertTrue(b:IsEnabled(), "Léo est dans mon groupe : actif")
+            b:Click()
+            assertEquals(1, #echanges, "le clic ouvre l'échange avec Léo")
+            evenement("BAG_UPDATE_DELAYED")
+            ecouler(5)
+            local tout = {} for _, x in ipairs(envoyes) do tout[#tout + 1] = x.texte end
+            assertTrue(table.concat(tout, " | "):find(":8/8/13#", 1, true) ~= nil, "mon stock part")
+        end)
+    end)
+    -- Chez Léo : c'est moi qui ai 3/8, il en a 13.
+    avecJournal({ pattes(3) }, function()
+        CompagnieDB.etats[LEO].quetes[1001] = { finie = true, objectifs = { { fait = 8, total = 8, stock = 13 } } }
+        avecLeo(function()
+            evenement("GROUP_ROSTER_UPDATE")
+            local b = assert(bouton("CompagnieSuiviAFaire1"), "un bouton À faire")
+            assertEquals("Léo te donne 5 Patte de loup", b:GetText())
+            assertTrue(not b:IsEnabled(), "rien à cliquer pour qui reçoit")
+        end)
+    end)
+    C_Item.GetItemInfo, C_Item.GetItemCount, InitiateTrade = info, compte, echange
     eteindre()
 end)
 

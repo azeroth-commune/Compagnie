@@ -737,6 +737,40 @@ assert(pareil(ns.decoder(corps), etat), "encodage puis décodage : identique (" 
 assert(ns.encoder(ns.decoder(corps)) == corps, "le même état s'encode toujours pareil (ordre fixe)")
 assert(pareil(ns.decoder(ns.encoder({ niveau = 1, quetes = {}, rendues = {} })),
   { niveau = 1, quetes = {}, rendues = {}, ecartees = {}, avant = {}, renduesAvant = {} }), "état vide")
+-- Objets à donner : pattes échangeables, Virgile en a 13 (5 de trop), Léo 5/8, Mira 6/8 : assez pour tous.
+local function stock(fait, s) local q = pattes(fait); q.objectifs[1].stock = s; return q end
+local function echanges(aFaire)
+  local t = {}
+  for _, y in ipairs(aFaire) do t[#t + 1] = y.type .. ":" .. y.membre .. ":" .. y.nombre .. ":" .. (y.a or y.de) end
+  return table.concat(t, " ")
+end
+local trois = { { nom = "Virgile", niveau = 5, quetes = { [PATTES] = stock(8, 13) } },
+  { nom = "Léo", niveau = 5, quetes = { [PATTES] = pattes(5) } }, { nom = "Mira", niveau = 5, quetes = { [PATTES] = pattes(6) } } }
+c = ns.calculer(trois)
+assert(echanges(c.aFaire) == "donner:Virgile:3:Léo donner:Virgile:2:Mira recevoir:Léo:3:Virgile recevoir:Mira:2:Virgile",
+  "qui donne combien à qui : " .. echanges(c.aFaire))
+assert(c.aFaire[1].texte == "Patte de loup" and c.aFaire[1].quete == PATTES, "l'objet et la quête")
+-- Pas assez pour tous (12 : 4 de trop pour 5 qui manquent), pas échangeable (pas de stock), ou Mira sans la quête : rien.
+trois[1].quetes[PATTES] = stock(8, 12)
+assert(#ns.calculer(trois).aFaire == 0, "pas assez pour tous : rien")
+trois[1].quetes[PATTES] = pattes(8)
+assert(#ns.calculer(trois).aFaire == 0, "pas échangeable : rien")
+trois[1].quetes[PATTES], trois[3].quetes = stock(8, 13), {}
+assert(echanges(ns.calculer(trois).aFaire) == "", "Mira n'a pas la quête : rien à donner")
+-- Mira l'a rendue : elle ne compte plus ; deux donneurs pour un seul receveur.
+trois[3].rendues = { [PATTES] = true }
+trois[2].quetes[PATTES] = pattes(2)
+trois[3].quetes = { [PATTES] = stock(8, 11) }
+trois[3].rendues = nil
+c = ns.calculer(trois)
+assert(echanges(c.aFaire) == "donner:Mira:1:Léo donner:Virgile:5:Léo recevoir:Léo:5:Virgile recevoir:Léo:1:Mira",
+  "deux donneurs : " .. echanges(c.aFaire))
+-- Le stock part avec l'objectif fini, au-delà du total seulement ; reçu tel quel ; un stock sur un objectif pas fini, rejeté.
+local recuS = ns.decoder(ns.encoder({ niveau = 5, quetes = { [7] = stock(8, 13), [8] = stock(5, 5) }, rendues = {} }))
+assert(recuS.quetes[7].objectifs[1].stock == 13 and recuS.quetes[8].objectifs[1].stock == nil, "le stock au-delà du total")
+assert(ns.decoder("5#7:0:5/8/9#############") == nil and ns.decoder("5#7:1:8/8/8#############") == nil
+  and ns.decoder("5#7:1:8/8/9#############").quetes[7].objectifs[1].stock == 9, "stock : fini et au-delà du total")
+
 -- Le texte exact des objectifs n'est pas envoyé (code de grammaire du jeu « |4… ; ») : les nombres et le nom de chaque
 -- objectif (15e champ), qu'affiche un membre qui n'a pas la quête.
 local avecTexte = { niveau = 12, quetes = { [7] = { finie = false, objectifs = {

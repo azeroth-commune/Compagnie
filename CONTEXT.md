@@ -76,6 +76,10 @@ _Avoid_: quête solo
 **Avancement commun**:
 L'avancement d'une quête pour la Compagnie : celui du membre le moins avancé, absents compris.
 
+**Objets à donner**:
+Écart sur un objectif d'objet échangeable (jamais lié : pas un objet de quête lié) quand la Compagnie en a assez pour que tous finissent, en comptant ce que chacun a dans ses sacs au-delà du total : chez celui qui en a de trop, « Donne 5 Patte de loup à Léo » (le clic ouvre l'échange, Léo dans le groupe) ; chez celui à qui il en manque, « Léo te donne 5 Patte de loup ». Rien tant qu'un membre n'a pas la quête, ni quand il n'y en a pas assez pour tous.
+_Avoid_: partage d'objets (« partager » est réservé aux quêtes), don
+
 **À rendre**:
 Une quête dont l'avancement commun est complet : tous les membres peuvent la rendre.
 

@@ -132,6 +132,16 @@ end
 
 local function entier(v, max) return math.min(max, math.max(0, math.floor(tonumber(v) or 0))) end
 
+-- Combien j'ai, dans mes sacs, de l'objet d'un objectif (par son nom, ns.libelle), s'il s'échange ; nil sinon. Le jeu
+-- borne le compte d'un objectif au total : le surplus qu'un autre membre peut recevoir ne se lit que dans les sacs.
+-- ponytail: seulement un objet jamais lié (bindType 0) ; un objet de quête lié (4) ou lié quand ramassé (1) ne
+-- s'échange pas, un « lié quand équipé » est écarté par prudence.
+local function stockEchangeable(nom)
+  if not nom or select(14, C_Item.GetItemInfo(nom)) ~= 0 then return nil end
+  local n = C_Item.GetItemCount(nom)
+  return type(n) == "number" and n > 0 and n or nil
+end
+
 -- Mes prérequis manquants pour la zone de la Compagnie (#27), calculés en direct (rendue : IsQuestFlaggedCompleted ; ma
 -- race et ma classe) : choisir la zone du rendez-vous montre tout de suite ce qu'il faut faire avant de partir.
 local function mesPrerequis()
@@ -157,7 +167,8 @@ function monEtat()
       for k, o in ipairs(C_QuestLog.GetQuestObjectives(id) or {}) do
         local total = entier(o.numRequired, 99999)
         local fait = math.min(total, entier(o.numFulfilled, 99999))
-        objectifs[k] = { fait = fait, total = total, texte = gabarit(o.text, o.numFulfilled, o.numRequired) }
+        objectifs[k] = { fait = fait, total = total, texte = gabarit(o.text, o.numFulfilled, o.numRequired),
+          stock = o.type == "item" and stockEchangeable(ns.libelle(o.text)) or nil }
         toutFini = toutFini and (o.finished == true or fait >= total)
       end
       local finie = C_QuestLog.IsComplete(id)
@@ -661,6 +672,7 @@ local function remplirAFaire(l, ecarts, unites)
         if bouton == "RightButton" and self.ecartable then menuEcarter(self, self.ecartable) end
       end)
       b:SetScript("OnClick", function(self)
+        if self.x.type == "donner" then return self.unite and InitiateTrade(self.unite) end
         if self.x.type ~= "ecartee" and self.x.type ~= "partager" then return end
         if self.x.type == "ecartee" then
           local p = StaticPopup_Show("COMPAGNIE_ABANDON", titre(self.x.quete))
@@ -676,7 +688,8 @@ local function remplirAFaire(l, ecarts, unites)
       end)
       l.boutons[i] = b
     end
-    b.x, b.ecartable, b.details = x, (x.type == "avance" or x.type == "prerequis" or x.type == "niveau" or x.type == "prendre") and x.quete or nil, nil
+    b.x, b.ecartable, b.details = x, (x.type == "avance" or x.type == "prerequis" or x.type == "niveau" or x.type == "prendre"
+      or x.type == "donner" or x.type == "recevoir") and x.quete or nil, nil
     if x.type == "prerequis" then
       local n = #x.chaine
       local quetes = n == 1 and "1 quête" or n .. " quêtes"
@@ -712,6 +725,20 @@ local function remplirAFaire(l, ecarts, unites)
         b.details = ("« %s » ne se partage pas : chacun va la prendre."):format(titre(x.quete))
       end
       b:Disable()
+    elseif x.type == "donner" or x.type == "recevoir" then
+      local objet = ns.libelle(x.texte) or "objets"
+      if x.type == "donner" then
+        b.unite = unites[x.a] -- l'échange ne s'ouvre qu'avec un membre de mon groupe, connecté
+        b:SetText(("Donne %d %s à %s"):format(x.nombre, objet, prenom(x.a)))
+        b.details = ("La Compagnie a assez de %s pour « %s » : donne-en %d à %s%s."):format(objet, titre(x.quete), x.nombre,
+          prenom(x.a), b.unite and " (clic : ouvrir l'échange)" or "")
+        b:SetEnabled(b.unite ~= nil)
+      else
+        b:SetText(("%s te donne %d %s"):format(prenom(x.de), x.nombre, objet))
+        b.details = ("La Compagnie a assez de %s pour « %s » : %s t'en donne %d."):format(objet, titre(x.quete),
+          prenom(x.de), x.nombre)
+        b:Disable()
+      end
     elseif x.type == "foyer" then
       local voyelle = x.auberge:find("^[AEIOUYaeiouy]") or x.auberge:sub(1, 2) == "É"
       b:SetText("Lie-toi à l'auberge " .. (voyelle and "d'" or "de ") .. x.auberge)
@@ -1404,12 +1431,12 @@ local function ramasse(message)
 end
 
 local MONJOURNAL = { QUEST_LOG_UPDATE = true, QUEST_TURNED_IN = true, PLAYER_LEVEL_UP = true, UNIT_QUEST_LOG_CHANGED = true,
-  BAG_UPDATE_COOLDOWN = true, HEARTHSTONE_BOUND = true }
+  BAG_UPDATE_COOLDOWN = true, HEARTHSTONE_BOUND = true, BAG_UPDATE_DELAYED = true } -- les sacs : le stock échangeable
 local cadre = CreateFrame("Frame", "CompagnieMessages")
 for _, ev in ipairs({ "ADDON_LOADED", "PLAYER_ENTERING_WORLD", "CHAT_MSG_ADDON", "GROUP_ROSTER_UPDATE", "QUEST_LOG_UPDATE",
   "QUEST_ACCEPTED", "QUEST_TURNED_IN", "PLAYER_LEVEL_UP", "UNIT_QUEST_LOG_CHANGED", "PLAYER_REGEN_ENABLED", "ZONE_CHANGED_NEW_AREA",
   "QUEST_PROGRESS", "QUEST_COMPLETE", "QUEST_DETAIL", "QUEST_GREETING", "QUEST_FINISHED", "BAG_UPDATE_COOLDOWN",
-  "HEARTHSTONE_BOUND", "QUEST_ACCEPT_CONFIRM", "CHAT_MSG_SYSTEM", "CHAT_MSG_LOOT", "NAME_PLATE_UNIT_ADDED" }) do cadre:RegisterEvent(ev) end
+  "HEARTHSTONE_BOUND", "BAG_UPDATE_DELAYED", "QUEST_ACCEPT_CONFIRM", "CHAT_MSG_SYSTEM", "CHAT_MSG_LOOT", "NAME_PLATE_UNIT_ADDED" }) do cadre:RegisterEvent(ev) end
 cadre:SetScript("OnEvent", function(_, ev, a1, texte, canal, expediteur)
   if ev == "ADDON_LOADED" then
     if a1 == "Compagnie" then
