@@ -1191,7 +1191,8 @@ end
 local function plaque(unite)
   local p = unite and C_NamePlate.GetNamePlateForUnit(unite)
   if not p or p:IsForbidden() then return end
-  local n = not UnitIsPlayer(unite) and aTuer[UnitName(unite)]
+  -- Pas en instance : Questie s'y coupe aussi sur Forever (unités restreintes par le jeu).
+  local n = not IsInInstance() and not UnitIsPlayer(unite) and aTuer[UnitName(unite)]
   if not p.compagnie then
     if not n then return end
     p.compagnie = p:CreateFontString(nil, "OVERLAY", "GameFontNormalOutline")
