@@ -1056,7 +1056,7 @@ local function basculerMode()
     jeu.dire("Le mode Compagnie s'allume dans une Compagnie : fonde-la d'abord.")
   end
   appliquerMode()
-  if CompagnieFrame and CompagnieFrame:IsShown() then dessiner() end
+  redessiner() -- la fenêtre, et les plaques
 end
 
 ---------------------------------------------------------------------------------------------------
@@ -1176,8 +1176,44 @@ local function ouvrir()
   dessiner()
 end
 
+-- Les plaques des monstres (nameplates), mode Compagnie allumé : à droite de la barre de vie d'un monstre à tuer pour une
+-- quête de la Compagnie, ou à part (la quête d'un membre, que je l'aie ou non), le nombre qui reste à tuer ; le plus
+-- grand reste parmi ses objectifs (une mise à mort compte pour toutes les quêtes à la fois). Le monstre est reconnu à
+-- son nom, celui de l'objectif (ns.libelle). ponytail: rien pour un objet à ramasser sur lui (« Patte de loup ») : le
+-- jeu ne dit pas qui le lâche ; la base des quêtes le pourrait (QuestieDB).
+local aTuer = {} -- [nom du monstre] = reste
+local function compterATuer(objectifs)
+  for _, o in ipairs(objectifs) do
+    local n = ns.libelle(o.texte)
+    if n and o.total > o.fait then aTuer[n] = math.max(aTuer[n] or 0, o.total - o.fait) end
+  end
+end
+local function plaque(unite)
+  local p = unite and C_NamePlate.GetNamePlateForUnit(unite)
+  if not p or p:IsForbidden() then return end
+  local n = not UnitIsPlayer(unite) and aTuer[UnitName(unite)]
+  if not p.compagnie then
+    if not n then return end
+    p.compagnie = p:CreateFontString(nil, "OVERLAY", "GameFontNormalOutline")
+  end
+  local barre = p.UnitFrame and p.UnitFrame.HealthBarsContainer -- l'UnitFrame change d'une unité à l'autre
+  p.compagnie:ClearAllPoints()
+  if barre then p.compagnie:SetPoint("LEFT", barre, "RIGHT", 4, 0) else p.compagnie:SetPoint("BOTTOM", p, "TOP") end
+  p.compagnie:SetText(n or "")
+end
+local function majPlaques()
+  aTuer = {}
+  if modeActif() then
+    local calc = calculer()
+    for _, q in pairs(calc.quetes) do compterATuer(q.objectifs) end
+    for _, a in ipairs(calc.aPart) do if not a.ecartee then compterATuer(a.objectifs) end end
+  end
+  for _, p in ipairs(C_NamePlate.GetNamePlates() or {}) do plaque(p.unitToken or p.namePlateUnitToken) end
+end
+
 function redessiner()
   if CompagnieFrame and CompagnieFrame:IsShown() then dessiner() end
+  majPlaques()
   dessinerSuivi()
   dessinerPetiteListe()
   if remise then majBandeau() end
@@ -1372,7 +1408,7 @@ local cadre = CreateFrame("Frame", "CompagnieMessages")
 for _, ev in ipairs({ "ADDON_LOADED", "PLAYER_ENTERING_WORLD", "CHAT_MSG_ADDON", "GROUP_ROSTER_UPDATE", "QUEST_LOG_UPDATE",
   "QUEST_ACCEPTED", "QUEST_TURNED_IN", "PLAYER_LEVEL_UP", "UNIT_QUEST_LOG_CHANGED", "PLAYER_REGEN_ENABLED", "ZONE_CHANGED_NEW_AREA",
   "QUEST_PROGRESS", "QUEST_COMPLETE", "QUEST_DETAIL", "QUEST_GREETING", "QUEST_FINISHED", "BAG_UPDATE_COOLDOWN",
-  "HEARTHSTONE_BOUND", "QUEST_ACCEPT_CONFIRM", "CHAT_MSG_SYSTEM", "CHAT_MSG_LOOT" }) do cadre:RegisterEvent(ev) end
+  "HEARTHSTONE_BOUND", "QUEST_ACCEPT_CONFIRM", "CHAT_MSG_SYSTEM", "CHAT_MSG_LOOT", "NAME_PLATE_UNIT_ADDED" }) do cadre:RegisterEvent(ev) end
 cadre:SetScript("OnEvent", function(_, ev, a1, texte, canal, expediteur)
   if ev == "ADDON_LOADED" then
     if a1 == "Compagnie" then
@@ -1407,6 +1443,8 @@ cadre:SetScript("OnEvent", function(_, ev, a1, texte, canal, expediteur)
       fenetreQuete = { id = GetQuestID(), origine = o }
       accepterQuete()
     end
+  elseif ev == "NAME_PLATE_UNIT_ADDED" then
+    plaque(a1)
   elseif ev == "CHAT_MSG_LOOT" then
     if type(a1) == "string" then ramasse(a1) end
   elseif ev == "CHAT_MSG_SYSTEM" then
