@@ -880,16 +880,26 @@ local function placerLignes(blocs)
       l.texte:SetPoint("TOPLEFT")
       l.texte:SetWidth(244)
       l.texte:SetJustifyH("LEFT")
-      l:RegisterForClicks("RightButtonUp")
-      f:DeplacePar(l) -- place retenue (socle)
-      l:SetScript("OnClick", function(self) if self.quete then menuEcarter(self, self.quete, self.sansEcarter) end end)
+      l:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+      f:DeplacePar(l) -- place retenue (socle) ; un glisser ne clique pas
+      -- Clic gauche : la quête dans le journal, comme le suivi du jeu ; seulement si elle est dans mon journal.
+      l:SetScript("OnClick", function(self, bouton)
+        if bouton == "RightButton" then
+          if self.quete then menuEcarter(self, self.quete, self.sansEcarter) end
+        elseif self.carte and C_QuestLog.GetLogIndexForQuestID(self.carte) and QuestMapFrame_OpenToQuestDetails then
+          QuestMapFrame_OpenToQuestDetails(self.carte)
+        end
+      end)
       l:SetScript("OnEnter", function(self)
         allumerCarte(self.carte)
         if self.sansEcarter then
           GameTooltip:SetOwner(self, "ANCHOR_LEFT")
           GameTooltip:SetText("Clic droit : quête personnelle", 1, 1, 1, 1, true)
-          GameTooltip:Show()
-        elseif self.quete then bulleEcarter(self) end
+        elseif self.quete then bulleEcarter(self) else return end
+        if C_QuestLog.GetLogIndexForQuestID(self.carte) then
+          GameTooltip:AddLine("Clic : ouvrir dans le journal", 0.6, 0.6, 0.6, true)
+        end
+        GameTooltip:Show()
       end)
       l:SetScript("OnLeave", function() GameTooltip:Hide(); eteindreCarte() end)
       lignesSuivi[i] = l
