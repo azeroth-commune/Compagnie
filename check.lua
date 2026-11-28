@@ -491,6 +491,82 @@ assert(#ns.calculer({ { nom = "Virgile", quetes = {} } }, 0, nil, BASE, nil).aCo
 
 print("Compagnie : calcul de la Compagnie OK")
 
+-- L'arbre des chaînes (#33), sur une base des quêtes fabriquée : la Forêt (12), Teldrassil (141) pour un début hors zone.
+local FORET, PALADIN = 12, 2
+local ARBRE = {
+  [100] = { nom = "Les loups", zone = FORET, niveau = 5, suites = { 101 } }, -- une chaîne de trois, au niveau 5
+  [101] = { zone = FORET, niveau = 6, prerequis = { 100 }, suites = { 102 } },
+  [102] = { zone = FORET, niveau = 7, prerequis = { 101 } },
+  [200] = { nom = "Les kobolds", zone = FORET, niveau = 3 }, [201] = { zone = FORET, niveau = 4 }, -- deux fils qui se rejoignent
+  [202] = { zone = FORET, niveau = 5, prerequis = { 200, 201 } },
+  [210] = { zone = FORET, niveau = 20, niveau_requis = 18, prerequis_un = { 202, 9999 } }, -- un seul parmi plusieurs
+  [400] = { zone = FORET, niveau = 10, prerequis = { 940 } }, -- au bout d'une chaîne de Teldrassil
+  [937] = { zone = TELD, niveau = 2, suites = { 940 } }, [940] = { nom = "Teldrassil", zone = TELD, niveau = 4, prerequis = { 937 }, suites = { 400 } },
+  [500] = { zone = FORET, niveau = 2, prerequis = { 501 }, amorces = { 501 } }, [501] = { zone = FORET, niveau = 1, suites = { 500 } }, -- une amorce
+  [600] = { zone = FORET, niveau = 9 }, [601] = { zone = FORET, niveau = 1 }, -- seules
+  [700] = { zone = FORET, niveau = 3, races = { ELFE } }, -- personne ne peut la prendre
+  [800] = { zone = FORET, niveau = 8, classes = { PALADIN }, suites = { 801 } }, -- Léo seul, paladin
+  [801] = { zone = FORET, niveau = 9, classes = { PALADIN }, prerequis = { 800 } },
+}
+local function arbre(membres, ecartees, deplies)
+  local a = ns.arbreDesChaines(membres, ecartees, ARBRE, FORET, deplies)
+  a.case, a.bande = {}, {}
+  for _, c in ipairs(a.cases) do a.case[c.quete or c.key] = c end
+  for _, b in ipairs(a.bandes) do a.bande[b.key] = b end
+  return a
+end
+local function bandeDe(a, id) return a.bande[a.case[id].band] end
+local function idsDe(a, b) -- les quêtes d'une bande, triées
+  local t = {}
+  for _, c in ipairs(a.cases) do if c.band == b.key then t[#t + 1] = c.quete end end
+  table.sort(t)
+  return table.concat(t, ",")
+end
+local function lie(a, de, vers)
+  for _, l in ipairs(a.liens) do if not l.hidden and l.from.quete == de and l.to.quete == vers then return true end end
+end
+local function fin(fait, total) return { finie = fait == total, objectifs = { { fait = fait, total = total } } } end
+local virgile = function(q) return { nom = "Virgile", niveau = 10, race = HUMAIN, classe = GUERRIER, quetes = q or {} } end
+local leo = function(q) return { nom = "Léo", niveau = 10, race = HUMAIN, classe = PALADIN, absent = true, quetes = q or {} } end
+local a = arbre({ virgile(), leo() })
+-- Bandes : une par chaîne, par niveau de leur première quête (kobolds 3, loups 5, paladin 8, Teldrassil 10), les seules
+-- en dernier ; toujours dans le même ordre.
+local ordre = {}
+for i, b in ipairs(a.bandes) do ordre[i] = idsDe(a, b) end
+assert(table.concat(ordre, " | ") == "200,201,202,210 | 100,101,102 | 800,801 | 400,940 | 500,501,600,601", table.concat(ordre, " | "))
+assert(a.bandes[#a.bandes].seules and not a.bandes[1].seules, "les quêtes seules : la dernière bande")
+for _ = 1, 5 do
+  local b = arbre({ virgile(), leo() })
+  for i, x in ipairs(b.bandes) do assert(x.key == a.bandes[i].key, "ordre stable") end
+end
+-- Deux prérequis qui se rejoignent : une seule chaîne, chaque lien dessiné ; « un seul parmi plusieurs » relie aussi.
+assert(lie(a, 200, 202) and lie(a, 201, 202) and lie(a, 202, 210) and lie(a, 100, 101) and lie(a, 101, 102), "les liens")
+assert(not lie(a, 501, 500) and bandeDe(a, 500).seules, "une amorce ne relie pas")
+-- Les quêtes seules, rangées par niveau ; les racines d'une chaîne ont leur rang (l'Arbre les range).
+local seules = {}
+for _, c in ipairs(a.cases) do if bandeDe(a, c.quete).seules then seules[#seules + 1] = c end end
+table.sort(seules, function(x, y) return (x.index or 99) < (y.index or 99) end)
+assert(seules[1].index and (seules[1].quete == 501 or seules[1].quete == 601), "la première seule : niveau 1")
+assert(a.case[200].index and a.case[201].index and not a.case[202].index, "les racines ont leur rang, pas les suites")
+for _, c in ipairs(a.cases) do assert(type(c.key) == "string" and a.bande[c.band], "clé texte, bande déclarée : " .. tostring(c.key)) end
+-- Début hors zone : une seule case (le prérequis de Teldrassil qui ouvre la quête), avec sa zone ; pas la chaîne étrangère.
+assert(a.case[940].horsZone == TELD and not a.case[937] and lie(a, 940, 400), "Teldrassil : une case hors zone, reliée")
+-- Personne ne peut la prendre : absente ; seul Léo (paladin) : chaîne personnelle.
+assert(not a.case[700], "quête impossible pour tous : hors de l'arbre")
+assert(bandeDe(a, 800).personnelle == "Léo" and not bandeDe(a, 100).personnelle, "chaîne personnelle de Léo")
+-- États : en cours avec l'avancement commun (Léo, absent, compte avec son dernier état connu), à rendre, écartée (elle
+-- l'emporte sur tout), niveau insuffisant avec le niveau requis ; le reste neutre.
+a = arbre({ virgile({ [100] = fin(5, 8), [200] = fin(1, 1), [201] = fin(1, 1) }),
+  leo({ [100] = fin(3, 8), [200] = fin(1, 1), [601] = fin(0, 2) }) }, { [601] = { ecartee = true, date = 1, par = "Léo" } })
+assert(a.case[100].etat == "enCours" and a.case[100].objectifs[1].fait == 3, "en cours : 3/8, l'absent compte")
+assert(a.case[200].etat == "aRendre", "à rendre : finie chez tous")
+assert(a.case[201].etat == "enCours" and a.case[201].objectifs[1].fait == 0, "prise par un seul : en cours, l'autre à 0")
+assert(a.case[601].etat == "ecartee", "écartée, même prise")
+assert(a.case[210].etat == "niveau" and a.case[210].requis == 18, "niveau insuffisant : 18 requis")
+assert(a.case[600].etat == "neutre", "le reste : neutre")
+
+print("Compagnie : arbre des chaînes OK")
+
 -- Les membres (Membres.lua) : fonder, accepter, refuser, quitter, retirer, sans l'API du jeu, sous la même garde.
 -- Trois clients (Virgile, Léo, Mira) dans un même groupe du jeu : ce que l'un envoie au groupe, les autres le reçoivent,
 -- avec le GUID que le serveur donne pour l'expéditeur.

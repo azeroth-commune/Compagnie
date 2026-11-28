@@ -408,3 +408,126 @@ function ns.chaine(base, p, zone)
   if base[p] then visiter(p) end
   return t
 end
+
+-- L'arbre des chaînes (#33) : les quêtes de la zone de la Compagnie, une bande par chaîne, pour l'Arbre du socle
+-- (AzerothCommune.PlacerArbre : cases, liens, bandes). membres, ecartees (les décisions), base, zone : comme ns.calculer
+-- (un absent compte avec son dernier état connu) ; deplies : { [bande] = true }, les chaînes repliées que j'ai dépliées.
+-- Chaîne : les quêtes reliées par leurs prérequis (tous, ou « un seul parmi plusieurs ») et leurs suites, d'après la
+-- base ; une amorce ne relie pas. Une quête sans lien : quête seule, dans la dernière bande. Une quête qu'aucun membre ne
+-- peut prendre (races, classes ; une race ou une classe inconnue peut : rien n'est deviné) n'y est pas ; seuls les
+-- membres qui peuvent la prendre comptent pour son état. Le début hors zone d'une chaîne : une seule case, le prérequis
+-- hors de la zone qui ouvre une quête de la zone (horsZone = sa zone), pas la chaîne étrangère.
+-- Rend { cases = { { key = "Q" .. id (texte : l'Arbre trie les clés avec ses relais « R… »), band, index (rang d'une
+--   racine), quete = id, niveau, horsZone, etat, objectifs (avancement commun, ns.calculer), requis } },
+--   liens = { { from, to, hidden } }, bandes = { { key, seules, personnelle = nom du seul membre qui peut la prendre,
+--   niveau } } } ; bandes rangées par niveau de leur première quête (puis son id : toujours le même ordre), les seules à la fin.
+-- États (le membre le moins avancé l'emporte) : aRendre, enCours, neutre, niveau (requis = le niveau requis) ; ecartee
+-- l'emporte sur tout. Une quête qu'un membre a dans son journal est en cours pour tous (l'avancement commun compte à 0
+-- celui qui ne l'a pas).
+local RANG = { niveau = 1, neutre = 3, enCours = 4, aRendre = 5 }
+local NOM_RANG = {}
+for k, v in pairs(RANG) do NOM_RANG[v] = k end
+local PAR_RANGEE = 5 -- ponytail: les quêtes seules, en rangées de 5 (liens cachés) plutôt qu'en une colonne interminable
+local function peut(q, m) return (not m.race or dans(q.races, m.race)) and (not m.classe or dans(q.classes, m.classe)) end
+function ns.arbreDesChaines(membres, ecartees, base, zone, deplies)
+  local calc = ns.calculer(membres, 0, ecartees, base, zone)
+  local eff = ns.ecarteesEffectives(ecartees, base)
+  local function preneurs(id)
+    local t = {}
+    for _, m in ipairs(membres) do if peut(base[id], m) then t[#t + 1] = m end end
+    return #t > 0 and t or nil
+  end
+  local function amorce(id, p) return dans(base[id].amorces or {}, p) end
+  local cases, parId, liens, vus = {}, {}, {}, {}
+  local function case(id, hors)
+    if not parId[id] then
+      local q = base[id]
+      parId[id] = { key = (hors and "H" or "Q") .. id, quete = id, niveau = q.niveau or 0, horsZone = hors and q.zone or nil,
+        preneurs = preneurs(id) }
+      cases[#cases + 1] = parId[id]
+    end
+    return parId[id]
+  end
+  local function lier(a, b)
+    if vus[a.key .. ">" .. b.key] then return end
+    vus[a.key .. ">" .. b.key] = true
+    liens[#liens + 1] = { from = a, to = b }
+  end
+  local ids = {}
+  for id, q in pairs(base) do if q.zone == zone and preneurs(id) then ids[#ids + 1] = id end end
+  table.sort(ids)
+  for _, id in ipairs(ids) do case(id) end
+  for _, id in ipairs(ids) do
+    for _, p in ipairs(prerequisDe(base[id])) do
+      local q = base[p]
+      if q and not amorce(id, p) and preneurs(p) then lier(case(p, q.zone ~= zone), parId[id]) end
+    end
+    for _, s in ipairs(base[id].suites or {}) do
+      if parId[s] and not parId[s].horsZone and not amorce(s, id) then lier(parId[id], parId[s]) end
+    end
+  end
+  -- Les chaînes : les composantes reliées (union de proche en proche).
+  local chef = {}
+  local function racine(c) while chef[c] ~= c do c = chef[c] end return c end
+  for _, c in ipairs(cases) do chef[c] = c end
+  for _, l in ipairs(liens) do chef[racine(l.from)] = racine(l.to) end
+  local avant = function(a, b) if a.niveau ~= b.niveau then return a.niveau < b.niveau end return a.quete < b.quete end
+  local parChaine, bandes, seules = {}, {}, {}
+  local aParent, relie = {}, {}
+  for _, l in ipairs(liens) do aParent[l.to], relie[l.to], relie[l.from] = true, true, true end
+  for _, c in ipairs(cases) do
+    if not relie[c] then seules[#seules + 1] = c
+    else
+      local r = racine(c)
+      parChaine[r] = parChaine[r] or {}
+      table.insert(parChaine[r], c)
+    end
+  end
+  for _, membresDe in pairs(parChaine) do
+    local premiere, qui = nil, {}
+    for _, c in ipairs(membresDe) do
+      if not c.horsZone and (not premiere or avant(c, premiere)) then premiere = c end
+      for _, m in ipairs(c.preneurs) do qui[m.nom] = true end
+    end
+    local seul = next(qui)
+    bandes[#bandes + 1] = { key = "B" .. premiere.quete, niveau = premiere.niveau, premiere = premiere.quete, cases = membresDe,
+      personnelle = next(qui, seul) == nil and #membres > 1 and seul or nil }
+  end
+  table.sort(bandes, function(a, b) if a.niveau ~= b.niveau then return a.niveau < b.niveau end return a.premiere < b.premiere end)
+  table.sort(seules, avant)
+  if #seules > 0 then bandes[#bandes + 1] = { key = "seules", seules = true, cases = seules } end
+  for _, b in ipairs(bandes) do
+    local racines = {}
+    for _, c in ipairs(b.cases) do c.band = b.key; if not aParent[c] then racines[#racines + 1] = c end end
+    table.sort(racines, avant)
+    if b.seules then
+      for i, c in ipairs(racines) do
+        if (i - 1) % PAR_RANGEE == 0 then c.index = i else liens[#liens + 1] = { from = racines[i - 1], to = c, hidden = true } end
+      end
+    else
+      for i, c in ipairs(racines) do c.index = i end
+    end
+    b.cases = nil
+  end
+  -- États : chaque membre qui peut la prendre, le moins avancé l'emporte.
+  for _, c in ipairs(cases) do
+    local id, rang, tenue = c.quete, 99, false
+    local requis = base[id].niveau_requis or 0
+    local rangs = {}
+    for i, m in ipairs(c.preneurs) do
+      local q = m.quetes and m.quetes[id]
+      if q then rangs[i] = q.finie and RANG.aRendre or RANG.enCours; tenue = true
+      elseif m.niveau and m.niveau < requis then rangs[i] = RANG.niveau
+      else rangs[i] = RANG.neutre end
+    end
+    for _, r in ipairs(rangs) do
+      if tenue and r == RANG.neutre then r = RANG.enCours end
+      rang = math.min(rang, r)
+    end
+    c.etat = eff[id] and "ecartee" or NOM_RANG[rang]
+    c.requis = c.etat == "niveau" and requis or nil
+    c.objectifs = (c.etat == "enCours" or c.etat == "aRendre") and calc.quetes[id] and calc.quetes[id].objectifs or nil
+    c.preneurs = nil
+  end
+  return { cases = cases, liens = liens, bandes = bandes }
+end
