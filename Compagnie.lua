@@ -1273,12 +1273,14 @@ local function etatCase(n)
   if n.repliee then return (n.etat == "ecartee" and "Écartée" or "Faite par tous") .. " · clic : déplier" end
   if n.horsZone then return "Hors zone : " .. nomZone(n.horsZone) .. (n.etat == "faite" and " · faite" or "") end
   local t = LIBELLES[n.etat] or n.etat == "niveau" and ("niveau %d requis"):format(n.requis) or nil
-  if n.etat == "enCours" and n.objectifs then
+  if n.etat == "enCours" then -- l'avancement commun ; « En cours » sans objectif (aller parler à quelqu'un)
     local c = {}
-    for i, o in ipairs(n.objectifs) do c[i] = o.fait .. "/" .. o.total end
+    for i, o in ipairs(n.objectifs or {}) do c[i] = o.fait .. "/" .. o.total end
     t = #c > 0 and table.concat(c, ", ") or "En cours"
   end
-  return ("Niv. %d"):format(n.niveau) .. (t and " · " .. t or "")
+  -- un niveau inconnu (la base met -1 aux quêtes qui suivent le niveau du joueur) ne s'écrit pas
+  local niv = (n.niveau or 0) > 0 and ("Niv. %d"):format(n.niveau) or nil
+  return niv and t and (niv .. " · " .. t) or niv or t or ""
 end
 local function bulleCase(c)
   local n, q = c.n, base()[c.n.quete] or {}
