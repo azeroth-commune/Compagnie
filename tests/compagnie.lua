@@ -911,6 +911,39 @@ test("la liste À faire se dessine avec ses boutons ; aucun abandon sans un clic
     eteindre()
 end)
 
+test("survol d'une quête, carte ouverte (#37) : sa zone s'allume (suivi, À faire), s'éteint à la sortie ; carte fermée : rien", function()
+    avecJournal({ pattes(3), KOBOLDS }, function()
+        fabriquer({ guid = LEO, nom = "Léo Lame" })
+        CompagnieDB.etats = { [LEO] = { niveau = 5, rendues = {}, quetes = { [1001] = { finie = false, objectifs = { { fait = 0, total = 8 } } } } } }
+        local appels, ouverte = {}, false
+        local vrais = { WorldMapFrame.IsShown, WorldMapFrame.SetHighlightedQuestID, WorldMapFrame.ClearHighlightedQuestID }
+        WorldMapFrame.IsShown = function() return ouverte end
+        WorldMapFrame.SetHighlightedQuestID = function(_, id) appels[#appels + 1] = id end
+        WorldMapFrame.ClearHighlightedQuestID = function() appels[#appels + 1] = "effacée" end
+        local ok, err = pcall(avecGroupe, {}, false, function()
+            charger()
+            local l, b = CompagnieSuiviLigne1, assert(bouton("CompagnieSuiviAFaire1"), "Partager les Kobolds")
+            local id = l.carte
+            assertTrue(id == 1001 or id == 1003, "la ligne porte sa quête : " .. tostring(id))
+            l:GetScript("OnEnter")(l); l:GetScript("OnLeave")(l)
+            assertEquals(0, #appels, "carte fermée : rien")
+            ouverte = true
+            l:GetScript("OnEnter")(l)
+            assertEquals(id, appels[1], "suivi : sa zone")
+            l:GetScript("OnLeave")(l)
+            assertEquals("effacée", appels[2])
+            b:GetScript("OnEnter")(b); b:GetScript("OnLeave")(b)
+            assertEquals(1003, appels[3], "À faire : la quête à partager")
+            assertEquals("effacée", appels[4])
+            l:GetScript("OnLeave")(l)
+            assertEquals(4, #appels, "rien d'allumé par nous : le survol du journal du jeu n'est pas effacé")
+        end)
+        WorldMapFrame.IsShown, WorldMapFrame.SetHighlightedQuestID, WorldMapFrame.ClearHighlightedQuestID = unpack(vrais)
+        if not ok then error(err, 0) end
+    end)
+    eteindre()
+end)
+
 test("objets à donner : la Compagnie en a assez, qui donne combien à qui ; le clic ouvre l'échange", function()
     local info, compte, echange = C_Item.GetItemInfo, C_Item.GetItemCount, InitiateTrade
     local echanges = {}

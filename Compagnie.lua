@@ -571,7 +571,8 @@ local function confirmerEscorte(qui, titreEscorte)
 end
 
 -- Les blocs du suivi, un par quête (titre, objectifs, état) : { texte, quete = id d'une quête de la Compagnie (le clic
--- droit propose de l'écarter) } ; l'en-tête « À part », les quêtes à part et le message sans quête : sans quete.
+-- droit propose de l'écarter), carte = id de la quête du bloc (son survol allume sa zone, #37) } ; l'en-tête
+-- « À part », les quêtes à part et le message sans quête : sans quete.
 local function blocsSuivi(calc, presents)
   local ordre, blocs = {}, {}
   local voir = zoneAffichee()
@@ -595,7 +596,7 @@ local function blocsSuivi(calc, presents)
     end
     if q.aRendre then lignes[#lignes + 1] = "  |cff59cc73À rendre|r"
     elseif #attente > 0 then lignes[#lignes + 1] = "  |cff999999En attente de " .. table.concat(attente, ", ") .. "|r" end
-    blocs[#blocs + 1] = { texte = table.concat(lignes, "\n"), quete = id }
+    blocs[#blocs + 1] = { texte = table.concat(lignes, "\n"), quete = id, carte = id }
   end
   -- Les quêtes à part (#20 : quêtes d'avant ; #21 : écartée gardée), sous les quêtes de la Compagnie : nommées, avec
   -- l'avancement de qui l'a ; À rendre quand il l'a finie, sans attendre personne.
@@ -608,7 +609,8 @@ local function blocsSuivi(calc, presents)
       if a.aRendre then lignes[#lignes + 1] = "  |cff59cc73À rendre|r" end
       -- Ma quête marquée personnelle (#7) : le clic droit propose de la démarquer.
       local marquee = a.membre == moi() and e.db.personnelles and e.db.personnelles[a.quete]
-      blocs[#blocs + 1] = { texte = table.concat(lignes, "\n"), quete = marquee and a.quete or nil, sansEcarter = marquee }
+      blocs[#blocs + 1] = { texte = table.concat(lignes, "\n"), quete = marquee and a.quete or nil, sansEcarter = marquee,
+        carte = a.quete }
     end
   end
   if #blocs == 0 then
@@ -687,6 +689,21 @@ local function entete(f, texte, bulle)
   f:DeplacePar(h)
   f.entete = h
 end
+-- Carte du monde ouverte, survoler une quête (suivi, À faire) allume sa zone, comme le journal du jeu (#37). Le jeu ne
+-- dessine que celle d'une quête en cours de mon journal : sinon rien. On n'éteint que ce qu'on a allumé (le survol du
+-- journal du jeu reste à lui) ; GetHighlightedQuestID rend toujours nil sur Forever, d'où l'id gardé ici.
+local carteAllumee
+local function allumerCarte(id)
+  if not id or not WorldMapFrame:IsShown() then return end
+  WorldMapFrame:SetHighlightedQuestID(id)
+  carteAllumee = id
+end
+local function eteindreCarte()
+  if not carteAllumee then return end
+  WorldMapFrame:ClearHighlightedQuestID()
+  carteAllumee = nil
+end
+
 -- Une liste de boutons dans parent (le suivi, ou la petite liste), en haut à y ; rend sa hauteur.
 local function listeAFaire(parent, nom, y)
   local l = CreateFrame("Frame", nom, parent)
@@ -713,6 +730,7 @@ local function remplirAFaire(l, ecarts, unites)
       -- Un bouton inactif n'a ni OnClick ni (par défaut) OnEnter, mais reçoit OnMouseUp : le clic droit passe par là.
       b:SetMotionScriptsWhileDisabled(true)
       b:SetScript("OnEnter", function(self)
+        allumerCarte(self.x.type == "partager" and self.quete or self.x.quete)
         local entier = self:GetFontString():IsTruncated() and self:GetText() or nil
         if self.ecartable then bulleEcarter(self, self.details or entier)
         elseif entier then
@@ -721,7 +739,7 @@ local function remplirAFaire(l, ecarts, unites)
           GameTooltip:Show()
         end
       end)
-      b:SetScript("OnLeave", function() GameTooltip:Hide() end)
+      b:SetScript("OnLeave", function() GameTooltip:Hide(); eteindreCarte() end)
       b:HookScript("OnMouseUp", function(self, bouton)
         if bouton == "RightButton" and self.ecartable then menuEcarter(self, self.ecartable) end
       end)
@@ -858,16 +876,17 @@ local function placerLignes(blocs)
       f:DeplacePar(l) -- place retenue (socle)
       l:SetScript("OnClick", function(self) if self.quete then menuEcarter(self, self.quete, self.sansEcarter) end end)
       l:SetScript("OnEnter", function(self)
+        allumerCarte(self.carte)
         if self.sansEcarter then
           GameTooltip:SetOwner(self, "ANCHOR_LEFT")
           GameTooltip:SetText("Clic droit : quête personnelle", 1, 1, 1, 1, true)
           GameTooltip:Show()
         elseif self.quete then bulleEcarter(self) end
       end)
-      l:SetScript("OnLeave", function() GameTooltip:Hide() end)
+      l:SetScript("OnLeave", function() GameTooltip:Hide(); eteindreCarte() end)
       lignesSuivi[i] = l
     end
-    l.quete, l.sansEcarter = b.quete, b.sansEcarter
+    l.quete, l.sansEcarter, l.carte = b.quete, b.sansEcarter, b.carte
     l.texte:SetText(b.texte)
     local h = math.max(1, l.texte:GetStringHeight())
     l:SetHeight(h)
