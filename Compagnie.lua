@@ -1366,12 +1366,15 @@ local function caseChaine(n, c)
   return c
 end
 
-function dessinerChaines()
+local dernier -- le dernier arbre calculé : redessiné tel quel pendant un redimensionnement (memes = true)
+function dessinerChaines(memes)
   local f = CompagnieChainesFrame
   if not (f and f:IsShown()) then return end
   local zc = e.db.zoneCompagnie
   f.title:SetText(zc and "Compagnie · " .. nomZone(zc.zone) or "Compagnie")
-  local a = arbreChaines and e.db.compagnie and zc and ns.arbreDesChaines(membresDuJeu(), e.db.ecartees, base(), zc.zone, deplies)
+  local a = memes and dernier
+    or arbreChaines and e.db.compagnie and zc and ns.arbreDesChaines(membresDuJeu(), e.db.ecartees, base(), zc.zone, deplies)
+  dernier = a or nil
   local msg = not arbreChaines and "L'onglet Chaînes demande une version plus récente d'Azeroth Commune (l'Arbre) : mets le socle à jour."
     or not e.db.compagnie and "Pas de Compagnie : fonde-la dans l'onglet Membres."
     or not zc and "Choisis la zone de la Compagnie dans le suivi."
@@ -1416,7 +1419,7 @@ local function fenetreChaines()
   onglets(f)
   -- La largeur de la zone n'est connue qu'affichée : redessiné juste après (et agrandie : les étages s'étalent).
   f:HookScript("OnShow", function() C_Timer.After(0, dessinerChaines) end)
-  f:HookScript("OnSizeChanged", function() dessinerChaines() end)
+  f:HookScript("OnSizeChanged", function() dessinerChaines(true) end)
   return f
 end
 
