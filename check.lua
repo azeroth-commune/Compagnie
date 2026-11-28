@@ -1067,7 +1067,10 @@ local recus = {}
 local function ioRecu() return { maj = function() recus.maj = (recus.maj or 0) + 1 end,
   annoncer = function(t) recus.annonces = t end, zone = function(z) recus.zone = z end, liste = function(l) recus.liste = l end,
   demande = function(de) recus.demande = de end, maintenant = function() return recus.t or 1000 end,
-  heure = function() return 1764000000 end } end
+  heure = function() return 1764000000 end,
+  envoyerVersion = function() recus.versionsEnvoyees = (recus.versionsEnvoyees or 0) + 1 end,
+  programmer = function(_, fn) recus.plusTard = fn end,
+  incompatible = function(de, sa) recus.incompatible = { de = de, sa = sa or false } end } end
 local chezV = compagnieDe(V2)
 for _, m in ipairs(morceaux) do ns.recevoirEtat(chezV, L2, m, ioRecu()) end
 assert(pareil(chezV.db.etats[L2], gros), "l'état de Léo est recomposé et gardé comme dernier état connu")
@@ -1121,6 +1124,44 @@ recus.t = 5061
 ns.recevoirEtat(chezV, L2, un[1], ioRecu())
 assert(pareil(chezV.db.etats[L2], etat), "la minute suivante : écouté")
 recus.t = nil
+
+do -- les tests des versions ont leur propre chezV
+local chezV
+-- Versions : la demande d'état porte la version ; un état rejeté (autre format) prévient, une fois, avec la sienne.
+local function versionsDe(v) local e = compagnieDe(V2); e.version = v; return e end
+local illisible = "E;id-1234567890;1/1/1;35#######" -- 8 champs : le format d'une autre version
+chezV, recus = versionsDe("v0.1.0-beta9"), {}
+ns.recevoirEtat(chezV, L2, "D;id-1234567890;v0.1.0-beta10", ioRecu())
+assert(recus.demande == L2 and chezV.versions[L2] == "v0.1.0-beta10", "une demande avec version : notée, et on y répond")
+assert(recus.versionsEnvoyees == 1, "une autre version que la mienne : je lui dis la mienne")
+ns.recevoirEtat(chezV, L2, "D;id-1234567890;v0.1.0-beta10", ioRecu())
+assert(recus.versionsEnvoyees == 1, "une seule fois par membre : pas d'échange sans fin")
+ns.recevoirEtat(chezV, L2, illisible, ioRecu())
+assert(recus.incompatible == nil and recus.plusTard, "état rejeté : on attend un peu sa version avant de prévenir")
+recus.plusTard()
+assert(recus.incompatible.de == L2 and recus.incompatible.sa == "v0.1.0-beta10", "prévenu avec sa version")
+recus.incompatible, recus.plusTard = nil, nil
+ns.recevoirEtat(chezV, L2, illisible, ioRecu())
+assert(recus.plusTard == nil, "prévenu une seule fois par membre et par session")
+-- Une version d'avant beta9 ne dit pas la sienne : son état rejeté me fait envoyer la mienne, puis prévenir sans numéro.
+chezV, recus = versionsDe("v0.1.0-beta9"), {}
+ns.recevoirEtat(chezV, L2, "D;id-1234567890", ioRecu())
+assert(recus.demande == L2 and chezV.versions == nil and recus.versionsEnvoyees == nil, "demande sans version : comme avant")
+ns.recevoirEtat(chezV, L2, illisible, ioRecu())
+assert(recus.versionsEnvoyees == 1, "état rejeté : je dis ma version (il saura que la sienne est ancienne)")
+recus.plusTard()
+assert(recus.incompatible.sa == false, "sans version connue : une version ancienne")
+-- Même version et état rejeté (horloge, bug) : pas de faux « mettez à jour ». Version mal formée : ignorée.
+chezV, recus = versionsDe("v0.1.0-beta9"), {}
+ns.recevoirEtat(chezV, L2, "D;id-1234567890;v0.1.0-beta9", ioRecu())
+assert(recus.versionsEnvoyees == nil, "même version : rien à dire")
+ns.recevoirEtat(chezV, L2, illisible, ioRecu())
+recus.plusTard()
+assert(recus.incompatible == nil, "même version : pas de message de version")
+ns.recevoirEtat(chezV, L2, "D;id-1234567890;|cffff0000x", ioRecu())
+assert(chezV.versions[L2] == "v0.1.0-beta9", "version mal formée : ignorée")
+recus = {}
+end
 
 -- Le dernier état connu compte pour un absent : les membres du calcul, dans l'ordre de la Compagnie, moi en direct ;
 -- un membre jamais entendu compte sans quête (jamais à rendre sans lui) ; l'état d'un ancien membre est oublié.

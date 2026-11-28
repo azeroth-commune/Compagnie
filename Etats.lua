@@ -40,7 +40,8 @@
 -- au moins l'un des deux ; le nom, mêmes règles qu'une zone, sans « @ » ; x et y de 0 à 100), ids triés. Il passe en
 -- dernier : les origines remplissent la place qui reste dans MAX_MORCEAUX (PLACE), les suivantes ne partent pas.
 -- Messages d'add-on (préfixe Compagnie) : « E;idCompagnie;envoi/i/n;morceau » (un état en n morceaux bornés à 255
--- octets) et « D;idCompagnie » (demande d'état). L'expéditeur (de) est le GUID que Compagnie.lua tient du serveur.
+-- octets) et « D;idCompagnie;version » (demande d'état, avec ma version : celles d'avant 0.1.0-beta9 l'ignorent et
+-- n'envoient pas la leur). L'expéditeur (de) est le GUID que Compagnie.lua tient du serveur.
 -- Donnée reçue entre membres (CONTEXT-MAP) : servie telle quelle, mais lue strictement (un champ mal formé et tout l'état
 -- est rejeté ; rien n'est jamais exécuté ni interprété) et bornée (taille, nombre de morceaux, débit par expéditeur).
 local _, ns = ...
@@ -55,6 +56,7 @@ local MAX_ECARTEES, MAX_PREREQUIS = 20, 8
 local PLACE = MAX_MORCEAUX * (255 - #"E;Player-99999-0A1B2C3D-1764000000;99/10/10;")
 local AVENIR, OUBLI = 86400, 7 * 86400 -- secondes : une décision à plus d'un jour est rejetée ; une remise oubliée à 7 jours
 ns.DELAI_ENVOI = 3 -- secondes : une rafale d'événements part en un seul envoi
+ns.ATTENTE_VERSION = 10 -- secondes : après un état rejeté, le temps que sa version arrive avant de prévenir
 
 -- Les morceaux de s séparés par sep (un caractère), vides compris.
 local function couper(s, sep)
@@ -299,7 +301,11 @@ function ns.recevoirEtat(e, de, texte, io)
   if not d or t - d.debut >= 60 then d = { debut = t, n = 0 }; e.debit[de] = d end
   d.n = d.n + 1
   if d.n > DEBIT then return true end
-  if verbe == "D" then io.demande(de); return true end
+  if verbe == "D" then
+    if reste ~= "" then ns.noterVersion(e, de, reste, io) end
+    io.demande(de)
+    return true
+  end
   local envoi, i, n, morceau = reste:match("^(%d%d?)/(%d%d?)/(%d%d?);(.*)$")
   envoi, i, n = tonumber(envoi), tonumber(i), tonumber(n)
   if not envoi or envoi < 1 or n < 1 or n > MAX_MORCEAUX or i < 1 or i > n then return true end
@@ -311,7 +317,7 @@ function ns.recevoirEtat(e, de, texte, io)
   if i < n then return true end
   e.tampons[de] = nil
   local etat = ns.decoder(table.concat(b), io.heure())
-  if not etat then return true end
+  if not etat then ns.rejeter(e, de, io); return true end
   local liste = ns.fusionnerListe(e, id, etat.liste)
   if invite and not (liste and liste.entre) then return true end -- pas encore dans sa liste
   e.db.etats = e.db.etats or {}
@@ -322,6 +328,36 @@ function ns.recevoirEtat(e, de, texte, io)
   if zone then io.zone(etat.zoneCompagnie) end
   if liste then io.liste(liste) end
   return true
+end
+
+-- Versions : un état d'une autre version de Compagnie (un autre format) est rejeté par decoder, et le membre aurait
+-- l'air figé sur son dernier état. e.version : la mienne ; e.versions[GUID] : celle reçue avec sa demande d'état.
+-- io = { envoyerVersion = fn() : ma demande d'état, avec ma version, à la Compagnie ; programmer = fn(délai, fn) ;
+-- incompatible = fn(de, sa version ou nil : une version d'avant 0.1.0-beta9, qui ne la dit pas) }. Rien n'est
+-- sauvegardé : prévenu une fois par membre et par session.
+local function direMaVersion(e, de, io)
+  e.versionDite = e.versionDite or {}
+  if e.versionDite[de] then return end
+  e.versionDite[de] = true
+  io.envoyerVersion() -- une seule fois par membre : sa réponse ne relance pas d'échange
+end
+
+function ns.noterVersion(e, de, v, io)
+  if #v > 32 or not v:match("^[%w%.%-]+$") then return end
+  e.versions = e.versions or {}
+  e.versions[de] = v
+  if v ~= e.version then direMaVersion(e, de, io) end -- qu'il sache la mienne, même arrivé avant moi
+end
+
+function ns.rejeter(e, de, io)
+  e.rejets = e.rejets or {}
+  if e.rejets[de] then return end
+  e.rejets[de] = true
+  direMaVersion(e, de, io)
+  io.programmer(ns.ATTENTE_VERSION, function()
+    local sa = e.versions and e.versions[de]
+    if sa ~= e.version then io.incompatible(de, sa) end -- même version : un état faux, pas un souci de version
+  end)
 end
 
 -- Écarter (ecartee = true) ou remettre une quête (#21) : une décision de la Compagnie, datée (heure serveur), avec le

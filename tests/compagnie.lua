@@ -501,6 +501,33 @@ test("une demande d'état reçoit le mien : au groupe du jeu, ou chuchoté hors 
     eteindre()
 end)
 
+test("une autre version de Compagnie : ma demande dit ma version, son état illisible me prévient une fois", function()
+    avecJournal({ pattes(3) }, function()
+        avecGroupe({}, false, function(envoyes)
+            local ANA = "Player-1-0000CDEF" -- un membre que les autres tests ne connaissent pas (prévenu une fois par session)
+            fabriquer({ guid = ANA, nom = "Ana Roche" })
+            charger()
+            local n = #envoyes
+            evenement("PLAYER_ENTERING_WORLD", true, false) -- une connexion : la demande d'état part 3 s plus tard
+            ecouler(4)
+            local demande
+            for i = n + 1, #envoyes do if envoyes[i].texte:find("^D;essai;") then demande = envoyes[i].texte end end
+            assertNotNil(demande, "la demande d'état de la connexion part")
+            assertTrue(demande:find("^D;essai;[%w%.%-]+$") ~= nil, "avec ma version : " .. demande)
+            n = #envoyes
+            chuchote("D;essai;v0.1.0-beta99", "Ana Roche")
+            local dite = false
+            for i = n + 1, #envoyes do if envoyes[i].texte == demande and envoyes[i].cible == "Ana Roche" then dite = true end end
+            assertTrue(dite, "une autre version que la mienne : je lui dis la mienne")
+            local t = dits(function() chuchote("E;essai;4/1/1;35#######", "Ana Roche"); ecouler(11) end)
+            assertTrue(contient(t, "Ana a Compagnie v0.1.0-beta99, toi "), "prévenu avec les deux versions : " .. t)
+            t = dits(function() chuchote("E;essai;5/1/1;35#######", "Ana Roche"); ecouler(11) end)
+            assertTrue(not contient(t, "Ana a Compagnie"), "une seule fois")
+        end)
+    end)
+    eteindre()
+end)
+
 test("un membre hors du groupe entendu puis muet : redemandé, absent au bout de 2 min sans réponse", function()
     avecJournal({ pattes(8) }, function()
         avecGroupe({}, false, function(envoyes)
@@ -515,7 +542,7 @@ test("un membre hors du groupe entendu puis muet : redemandé, absent au bout de
             ecouler(30)
             local demandes = 0
             for i = n + 1, #envoyes do
-                if envoyes[i].texte == "D;essai" and envoyes[i].cible == "Léo Lame" then demandes = demandes + 1 end
+                if envoyes[i].texte:find("^D;essai;") and envoyes[i].cible == "Léo Lame" then demandes = demandes + 1 end
             end
             assertTrue(demandes >= 1 and demandes <= 3, "demandé une fois par minute de silence : " .. demandes)
             assertTrue(contient(suivi(), "En attente de Léo"), "sans réponse depuis 2 min : absent, " .. suivi())

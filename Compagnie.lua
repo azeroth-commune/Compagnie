@@ -22,6 +22,18 @@ local PEREMPTION, SILENCE, VEILLE = 120, 60, 30 -- secondes : présent si entend
 -- après SILENCE ; la veille passe toutes les VEILLE secondes
 
 local function moi() return UnitGUID("player") end
+local function prenom(guid)
+  local c = e.db.compagnie
+  local i = ns.membre(c, guid)
+  return i and c.membres[i].nom:match("^(%S+)") or "?"
+end
+
+-- Ma version (Etats.lua, ns.noterVersion) : l'étiquette que le packager met dans le TOC (@project-version@) ; « dev »
+-- depuis le dépôt, où le TOC garde le motif.
+local metadonnee = C_AddOns and C_AddOns.GetAddOnMetadata or GetAddOnMetadata
+e.version = metadonnee("Compagnie", "Version") or ""
+if not e.version:match("^[%w%.%-]+$") then e.version = "dev" end
+local function demandeEtat() return ("D;%s;%s"):format(e.db.compagnie.id, e.version) end
 
 -- Les personnages connectés de mon groupe du jeu, moi d'abord : GUID et « Prénom Nom » donnés par le serveur.
 local function groupe()
@@ -273,6 +285,15 @@ local reception = {
   zone = function(z) annoncerZone(z) end,
   liste = function(l) changerListe(l) end,
   demande = function() ns.signaler(e, true, envoi) end,
+  programmer = function(delai, fn) C_Timer.After(delai, fn) end,
+  envoyerVersion = function() if e.db.compagnie then diffuser(demandeEtat()) end end,
+  incompatible = function(de, sa)
+    local maj = " (client CurseForge : Compagnie en version Beta)."
+    jeu.dire(sa and ("%s a Compagnie %s, toi %s : vos états ne se lisent plus. La plus ancienne se met à jour%s")
+      :format(prenom(de), sa, e.version, maj)
+      or ("%s a une version de Compagnie plus ancienne que la tienne : son état ne se lit plus tant qu'elle n'est pas "
+      .. "mise à jour%s"):format(prenom(de), maj))
+  end,
   maintenant = GetTime,
   heure = GetServerTime,
 }
@@ -302,12 +323,6 @@ if filtrer then filtrer("CHAT_MSG_SYSTEM", horsLigne) end
 local masquageInterne = false
 local function modeActif() return e.db.compagnie ~= nil and e.db.modeCompagnie ~= false end
 local appliquerMode -- plus bas
-
-local function prenom(guid)
-  local c = e.db.compagnie
-  local i = ns.membre(c, guid)
-  return i and c.membres[i].nom:match("^(%S+)") or "?"
-end
 
 -- Des membres (GUID), nommés par leur prénom ; moi : « toi ».
 local function noms(guids)
@@ -1307,7 +1322,7 @@ local function connexion()
   appliquerMode() -- le suivi de Questie se crée un peu après l'entrée en jeu
   local c = e.db.compagnie
   if not c then return end
-  diffuser("D;" .. c.id, true)
+  diffuser(demandeEtat(), true)
   ns.signaler(e, true, envoi)
 end
 
@@ -1322,7 +1337,7 @@ local function veiller()
     for _, m in ipairs(c.membres) do
       local vu = connectes[m.guid]
       if m.guid ~= moi() and not unites[m.guid] and type(vu) == "number" and t - vu >= SILENCE then
-        poster("D;" .. c.id, "WHISPER", AC.Destinataire(m.nom))
+        poster(demandeEtat(), "WHISPER", AC.Destinataire(m.nom))
       end
     end
     redessiner()
