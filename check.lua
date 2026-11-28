@@ -419,6 +419,22 @@ local vu = {}
 for i, z in ipairs(zs) do vu[i] = z.zone .. ":" .. z.niveau .. (z.ouverte and "" or "x") end
 assert(table.concat(vu, ",") == "148:10,40:9,12:1,10:20x", "zones : " .. table.concat(vu, ","))
 
+-- Un perso de la Horde (Compagnie#35) : la vraie réserve du socle pour la Horde (AzerothCommune#112), mise en forme comme
+-- le fait le socle (les champs lus ici). Ses zones de départ ouvertes, pas celles de l'Alliance ; une chaîne de la Horde.
+do
+  local socle = {}
+  assert(loadfile("AzerothCommune/QuetesReserve.lua"))("AzerothCommune", socle)
+  local HORDE = {}
+  for id, c in pairs(assert(loadstring(socle.quetesReserve.Horde))()) do
+    HORDE[id] = { zone = c[2], niveau_requis = c[4], suites = c[9] }
+  end
+  local ouvertes = {}
+  for _, z in ipairs(ns.zones(HORDE, 5)) do if z.ouverte then ouvertes[z.zone] = true end end
+  assert(ouvertes[14] and ouvertes[85] and ouvertes[215], "Horde : Durotar, Tirisfal, Mulgore ouvertes")
+  assert(not ouvertes[12] and not ouvertes[141], "Horde : ni Elwynn ni Teldrassil")
+  assert(ns.suite(HORDE, 4641)[1] == 788, "Horde : Votre place en ce monde, puis 788")
+end
+
 -- Le contrôle des prérequis (#27), sur une base des quêtes fabriquée. Sombrivage (148) : le Bosquet des Anciens (952)
 -- demande Teldrassil (940), au bout d'une chaîne de 4 quêtes à Teldrassil (141) qui commence par La clairière enchantée.
 local SOMBRIVAGE, TELD = 148, 141

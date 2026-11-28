@@ -46,7 +46,9 @@ Avec le client CurseForge : installe **Compagnie** et **Azeroth Commune** (le so
 
 À la main : dézippe `Compagnie` et `AzerothCommune` dans `_forever_\Interface\AddOns\`.
 
-Compatible avec Questie s'il est installé.
+Avec Questie (qui installe QuestieDB), Compagnie connaît les quêtes de ta faction, à jour de ton QuestieDB : chaînes,
+prérequis, zones, donneurs. Sans lui, le socle fournit sa propre copie de la même base, prise à la publication du socle :
+tout marche, avec des données un peu moins fraîches. Alliance comme Horde.
 
 ## Commandes
 
