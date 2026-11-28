@@ -257,7 +257,8 @@ local function vider()
   if #file > 0 then vidage = true; C_Timer.After(1, vider) end
 end
 local function poster(texte, canal, cible)
-  if #file >= 50 then return false end -- file pleine (débit tenu longtemps) : refusé, l'état repartira (Etats.lua)
+  -- file pleine (débit tenu longtemps) : refusé, l'état repartira (Etats.lua) ; 60 : un état de 14 morceaux à 4 membres
+  if #file >= 60 then return false end
   file[#file + 1] = { texte = texte, canal = canal, cible = cible }
   if not vidage then vider() end
   return true
@@ -1301,10 +1302,15 @@ local function bulleCase(c)
   if ig and #ig.faites > 0 then GameTooltip:AddLine("Faite par " .. noms(ig.faites) .. ".", 1, 0.5, 0.15, true) end
   if ig and #ig.prises > 0 then GameTooltip:AddLine("Prise par " .. noms(ig.prises) .. ".", 1, 0.5, 0.15, true) end
   for _, b in ipairs(n.bloque or {}) do
-    local quoi = {}
-    for i, p in ipairs(b.prerequis or {}) do quoi[i] = "« " .. titre(p) .. " »" end
+    local function liste(ids, sep)
+      local t = {}
+      for i, p in ipairs(ids or {}) do t[i] = "« " .. titre(p) .. " »" end
+      return table.concat(t, sep)
+    end
+    local tous, un = liste(b.prerequis, " et "), liste(b.un, " ou ")
+    local quoi = tous .. (tous ~= "" and un ~= "" and ", puis " or "") .. (un ~= "" and ((b.un[2] and "l'une de " or "") .. un) or "")
     GameTooltip:AddLine(("Bloquée pour %s : %s."):format(noms({ b.membre }), b.niveau and "niveau " .. b.niveau
-      or "d'abord " .. table.concat(quoi, " ou ")), 0.9, 0.3, 0.3, true)
+      or "d'abord " .. quoi), 0.9, 0.3, 0.3, true)
   end
   if #aControler > 0 then
     GameTooltip:AddLine("À contrôler : " .. noms(aControler) .. " (son état ne couvre pas cette zone).", 0.6, 0.6, 0.6, true)
@@ -1353,7 +1359,7 @@ local function caseChaine(n, c)
     c:SetScript("OnLeave", function() GameTooltip:Hide() end)
   end
   c.n = n
-  local k = COULEURS[n.etat] or COULEURS.neutre
+  local k = COULEURS[n.etat] or COULEURS.verrouillee -- un état inconnu : terne (COULEURS.neutre n'existe pas)
   c.accent:SetColorTexture(k[1], k[2], k[3], 0.9)
   c.nom:SetText(n.repliee and ("%s%s — %d quête%s"):format(n.etat == "faite" and "|TInterface\\RaidFrame\\ReadyCheck-Ready:0|t " or "",
     titre(n.quete), n.n, n.n > 1 and "s" or "") or titre(n.quete))

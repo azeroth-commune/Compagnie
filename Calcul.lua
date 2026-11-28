@@ -442,9 +442,9 @@ end
 -- Repli : une chaîne dont toutes les quêtes sont faites ou écartées tient en une case (key « C » .. bande, repliee, n =
 -- ses quêtes de la zone, quete = sa première, etat faite, ou ecartee si toutes le sont), sauf dépliée (ses cases :
 -- repliable).
--- Rend { cases = { { key = "Q" .. id (texte : l'Arbre trie les clés avec ses relais « R… »), band, index (rang d'une
+-- Rend { cases = { { key = "Q" .. id, « H » .. id hors zone (texte : l'Arbre trie les clés avec ses relais « R… »), band, index (rang d'une
 --   racine), quete = id, niveau, horsZone, etat, objectifs (avancement commun, ns.calculer), requis, inegale = { faites,
---   prises } (noms), bloque = { { membre, niveau } ou { membre, prerequis = { id… } } }, repliee, n, repliable } },
+--   prises } (noms), bloque = { { membre, niveau } ou { membre, prerequis = { id… } (tous), un = { id… } (l'un d'eux) } }, repliee, n, repliable } },
 --   liens = { { from, to, hidden } }, bandes = { { key, seules, personnelle = nom du seul membre qui peut la prendre,
 --   niveau, premiere, repliee } }, aControler = { noms } } ; bandes rangées par niveau de leur première quête (puis son
 --   id : toujours le même ordre), les seules à la fin.
@@ -495,14 +495,14 @@ function ns.arbreDesChaines(membres, ecartees, base, zone, deplies)
     end
   end
   -- États : chaque membre qui peut la prendre ; le moins avancé l'emporte.
-  local function manque(m, id) -- ses prérequis que m n'a pas faits (« un seul parmi plusieurs » : tous, si aucun)
+  -- Ses prérequis que m n'a pas faits : tous ceux de prerequis (t), et ceux de « un seul parmi plusieurs » (un) si aucun n'est fait.
+  local function manque(m, id)
     local q, t, un, ok = base[id], {}, {}, false
     for _, p in ipairs(q.prerequis or {}) do if base[p] and not amorce(base, id, p) and not faite(m, p) then t[#t + 1] = p end end
     for _, p in ipairs(q.prerequis_un or {}) do
       if base[p] and not amorce(base, id, p) then if faite(m, p) then ok = true else un[#un + 1] = p end end
     end
-    if not ok then for _, p in ipairs(un) do t[#t + 1] = p end end
-    return t
+    return t, ok and {} or un
   end
   for _, c in ipairs(cases) do
     local id, rangs, tenue = c.quete, {}, false
@@ -514,9 +514,10 @@ function ns.arbreDesChaines(membres, ecartees, base, zone, deplies)
       elseif faite(m, id) then r = RANG.faite; faites[#faites + 1] = m.nom
       elseif m.niveau and m.niveau < requis then r = RANG.niveau; bloque[#bloque + 1] = { membre = m.nom, niveau = requis }
       elseif couvre(m) then
-        local t = not c.horsZone and manque(m, id) or {}
-        r = (c.horsZone or #t > 0) and RANG.verrouillee or RANG.disponible
-        if #t > 0 then bloque[#bloque + 1] = { membre = m.nom, prerequis = t } end
+        local t, un = {}, {}
+        if not c.horsZone then t, un = manque(m, id) end
+        r = (c.horsZone or #t + #un > 0) and RANG.verrouillee or RANG.disponible
+        if #t + #un > 0 then bloque[#bloque + 1] = { membre = m.nom, prerequis = t, un = un } end
       else r = false end -- à contrôler, rien de connu : seulement compté à 0 quand un autre l'a prise
       if r ~= nil then rangs[#rangs + 1] = r end
       if r and r < RANG.enCours then rien[#rien + 1] = m.nom end

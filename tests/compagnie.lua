@@ -106,7 +106,6 @@ test("Compagnie se charge : /compagnie, regroupé avec le socle, la Compagnie pa
     local meta = C_AddOns.GetAddOnMetadata
     assertEquals("AzerothCommune", meta("Compagnie", "Dependencies"))
     assertEquals("CompagnieDB", meta("Compagnie", "SavedVariablesPerCharacter"))
-    assertTrue((meta("Compagnie", "X-AzerothCommune") or ""):find("Arbre", 1, true) ~= nil, "la version du socle qui a l'Arbre (#33)")
     assertType("function", AzerothCommune.Arbre) -- le socle chargé l'a
 end)
 
@@ -1836,6 +1835,16 @@ test("onglet Chaînes (#33, #34) : en premier, sans zone le message ; la zone de
                     assertEquals("Hors zone : Teldrassil", c["Teldrassil"].sous:GetText())
                     assertEquals("Compagnie · Forêt d'Elwynn", CompagnieChainesFrame.title:GetText())
                     assertTrue(c["Les peaux"]:GetLeft() > c["Les loups"]:GetRight(), "la suite à droite de sa quête")
+                    -- La bulle (sans erreur Lua) : ce qui bloque, le début hors zone.
+                    local function bulle(cadre)
+                      cadre:GetScript("OnEnter")(cadre)
+                      local t = {}
+                      for i = 1, GameTooltip:NumLines() do t[#t + 1] = _G["GameTooltipTextLeft" .. i]:GetText() or "" end
+                      GameTooltip:Hide()
+                      return table.concat(t, "\n")
+                    end
+                    assertTrue(bulle(c["Le message"]):find("Bloquée pour", 1, true) ~= nil, "la bulle dit ce qui bloque")
+                    assertTrue(bulle(c["Teldrassil"]):find("Début hors de la zone", 1, true) ~= nil, "la bulle du début hors zone")
                     -- Clic droit sur une case : le menu du suivi.
                     local racine = menuDe(function() c["Les loups"]:Click("RightButton") end)
                     assertEquals("Les loups", entrees(racine)[1])

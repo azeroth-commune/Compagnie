@@ -576,6 +576,20 @@ assert(a.case[400].etat == "disponible", "disponible : Teldrassil fait par tous"
 assert(a.case[202].etat == "verrouillee", "verrouillée : 201 manque")
 local bl = a.case[202].bloque
 assert(#bl == 2 and bl[1].prerequis[1] == 201 and #bl[1].prerequis == 1, "ce qui la bloque, pour chacun : 201")
+-- Ce qui bloque : tous les prérequis (prerequis) à part de « un seul parmi plusieurs » (un), pour que la bulle dise et / ou.
+do
+  local b = { [1] = { zone = FORET, niveau = 1, suites = { 3 } }, [2] = { zone = FORET, niveau = 1, suites = { 3 } },
+    [3] = { zone = FORET, niveau = 2, prerequis = { 1, 2 } }, [4] = { zone = FORET, niveau = 1, suites = { 6 } },
+    [5] = { zone = FORET, niveau = 1, suites = { 6 } }, [6] = { zone = FORET, niveau = 2, prerequis_un = { 4, 5 } } }
+  local r = ns.arbreDesChaines({ { nom = "Virgile", niveau = 10, quetes = {}, renduesZone = { zone = FORET, quetes = { [5] = true } } },
+    { nom = "Léo", niveau = 10, quetes = {}, renduesZone = { zone = FORET, quetes = {} } } }, {}, b, FORET)
+  local c = {}
+  for _, x in ipairs(r.cases) do if x.quete then c[x.quete] = x end end
+  local b3 = c[3].bloque[1]
+  assert(#b3.prerequis == 2 and #b3.un == 0, "3 : 1 et 2, tous deux requis")
+  assert(#c[6].bloque == 1 and c[6].bloque[1].membre == "Léo" and #c[6].bloque[1].prerequis == 0 and #c[6].bloque[1].un == 2,
+    "6 : Virgile a fait 5 (un seul suffit) ; Léo, l'un de 4 ou 5")
+end
 -- Inégale : faite par Virgile, prise par Léo (absent : son dernier état connu) ; l'infobulle dit qui.
 local ig = a.case[100].inegale
 assert(a.case[100].etat == "enCours" and ig and ig.faites[1] == "Virgile" and ig.prises[1] == "Léo", "inégale : qui l'a faite, qui l'a prise")
