@@ -4,11 +4,11 @@
 local LEO, MIRA = "Player-1-0000ABCD", "Player-1-0000BCDE"
 -- Les champs d'un état ajoutés après le 10e, vides : APRES_ZONE, ceux après la zone de la Compagnie (#27 : mes
 -- prérequis manquants ; #23 : la liste des membres ; #6 : les origines) ; FIN, tous (#24 : la zone, puis APRES_ZONE).
-local APRES_ZONE = "###"
+local APRES_ZONE = "####"
 local FIN = "#" .. APRES_ZONE
 -- La fin de mon état, tel qu'il part dans une Compagnie (motif) : zone et prérequis vides, la liste des membres, puis
--- les origines (#6), vides.
-local MIEN = "###%d+=[^#]+#$"
+-- les rendues de la zone (#34) et les origines (#6), vides.
+local MIEN = "###%d+=[^#]+##$"
 
 local function moi() return { guid = UnitGUID("player"), nom = AzerothCommune.Personnage().nom } end
 
@@ -1461,7 +1461,7 @@ test("zone de la Compagnie (#24) : le menu, une zone grisée sous le niveau ; ch
                     assertEquals("Zone : Bois de la Pénombre (Léo à contrôler)", CompagnieZoneBouton:GetText())
                     -- Léo choisit la Marche de l'Ouest après moi : le chat le dit, le suivi suit.
                     t = dits(function()
-                        chuchote("E;essai;1/1/1;10#1001:0#########40:" .. math.floor(GetServerTime() + 60) .. ":Léo#40##")
+                        chuchote("E;essai;1/1/1;10#1001:0#########40:" .. math.floor(GetServerTime() + 60) .. ":Léo#40###")
                     end)
                     assertTrue(contient(t, "Léo a choisi Marche de l'Ouest pour la Compagnie."), t)
                     assertEquals("Zone : Marche de l'Ouest", CompagnieZoneBouton:GetText(), "Léo l'a contrôlée : rien à contrôler")
@@ -1519,6 +1519,8 @@ test("prérequis manquant (#27) : l'écart se dessine dans À faire, sa bulle di
                         evenement("QUEST_LOG_UPDATE")
                         ecouler(5)
                         assertTrue(envoyes[#envoyes].texte:find("#148=952:940#%d+=") ~= nil, envoyes[#envoyes].texte)
+                        -- …et mes quêtes rendues de la zone (#34) : la zone couverte, rien de rendu.
+                        assertTrue(envoyes[#envoyes].texte:find("#148#$") ~= nil, envoyes[#envoyes].texte)
                     end)
                     -- Clic droit sur la ligne (inactive) : Écarter le Bosquet ; l'écart disparaît, la chaîne avec lui.
                     local racine = menuDe(function() b:GetScript("OnMouseUp")(b, "RightButton") end)
@@ -1560,7 +1562,7 @@ test("Inviter (#23) : se dessine pour un joueur du groupe non membre ; l'invitat
             assertEquals(3, #lignes(), "Mira est membre")
             -- Mon état porte la nouvelle liste (pour les absents, et pour qu'elle entre chez elle).
             ecouler(5)
-            assertTrue(envoyes[#envoyes].texte:find("Mira Feuille#$") ~= nil, envoyes[#envoyes].texte)
+            assertTrue(envoyes[#envoyes].texte:find("Mira Feuille##$") ~= nil, envoyes[#envoyes].texte)
             CompagnieFrame:Hide()
         end)
     end)
@@ -1578,7 +1580,7 @@ test("Inviter (#23) : se dessine pour un joueur du groupe non membre ; l'invitat
             local g = moi().guid:gsub("^Player%-", "")
             local t = dits(function()
                 recu("E;c1;1/1/1;10############" .. math.floor(GetServerTime()) .. "=" .. LEO:gsub("^Player%-", "") ..
-                    ":Léo Lame,1-0000BCDE:Mira Feuille," .. g .. ":" .. moi().nom .. "#")
+                    ":Léo Lame,1-0000BCDE:Mira Feuille," .. g .. ":" .. moi().nom .. "##")
             end)
             assertTrue(contient(t, "Tu entres dans la Compagnie : Léo Lame"), t)
             assertEquals("c1", CompagnieDB.compagnie.id)
@@ -1798,7 +1800,7 @@ local function casesChaines()
 end
 local function compter(t) local n = 0 for _ in pairs(t) do n = n + 1 end return n end
 
-test("onglet Chaînes (#33) : en premier, sans zone le message ; la zone dessinée, clic droit = le menu du suivi ; onglets reliés, tailles à part ; « Voir les chaînes »", function()
+test("onglet Chaînes (#33, #34) : en premier, sans zone le message ; la zone dessinée, clic droit = le menu du suivi ; repli au clic ; onglets reliés, tailles à part ; « Voir les chaînes »", function()
     NOMS_ZONES[141] = "Teldrassil"
     local BASE = {
         [82001] = { nom = "Les loups", zone = 12, niveau = 5, suites = { 82002 }, donneur = { nom = "Maréchal Dughan", carte = 1429, x = 42, y = 65 } },
@@ -1840,7 +1842,17 @@ test("onglet Chaînes (#33) : en premier, sans zone le message ; la zone dessin�
                     assertTrue(choisir(racine, "Écarter pour la Compagnie"))
                     local _, popup = StaticPopup_Visible("COMPAGNIE_ECARTER")
                     dits(function() popup.button1:Click() end)
-                    assertEquals("Niv. 5 · Écartée", casesChaines()["Les loups"].sous:GetText(), "écartée, redessinée")
+                    -- Écartée avec sa suite (#34) : la chaîne se replie en une ligne ; clic, elle se déplie ; clic sur une
+                    -- de ses quêtes, elle se replie.
+                    local ligne = casesChaines()["Les loups — 2 quêtes"]
+                    assertNotNil(ligne, "la chaîne écartée en une ligne")
+                    assertEquals("Écartée · clic : déplier", ligne.sous:GetText())
+                    assertNil(casesChaines()["Les peaux"])
+                    ligne:Click("LeftButton")
+                    assertEquals("Niv. 5 · Écartée", casesChaines()["Les loups"].sous:GetText(), "dépliée")
+                    casesChaines()["Les peaux"]:Click("LeftButton")
+                    assertNotNil(casesChaines()["Les loups — 2 quêtes"], "repliée")
+                    casesChaines()["Les loups — 2 quêtes"]:Click("LeftButton")
                     assertTrue(choisir(menuDe(function() casesChaines()["Les loups"]:Click("RightButton") end), "Remettre dans la Compagnie"))
                     assertEquals("Niv. 5 · 1/8", casesChaines()["Les loups"].sous:GetText(), "remise")
                     -- Les onglets : Membres ouvre l'autre fenêtre à la même place ; chacune garde sa taille.

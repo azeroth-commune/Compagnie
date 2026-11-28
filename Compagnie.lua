@@ -164,6 +164,19 @@ local function mesPrerequis()
     select(3, UnitRace("player")), select(3, UnitClass("player")), ns.ecarteesEffectives(e.db.ecartees, q)) }
 end
 
+-- Mes quêtes rendues de la zone de la Compagnie (#34), pour l'arbre des chaînes des autres : celles de l'arbre
+-- (ns.quetesDeLaZone) que le jeu dit faites, vues par l'add-on ou d'avant mon entrée.
+-- ponytail: toute la base parcourue à chaque lecture de mon état, comme mesPrerequis.
+local function mesRenduesZone()
+  local zc = e.db.zoneCompagnie
+  if not zc then return nil end
+  local t = {}
+  for id in pairs(ns.quetesDeLaZone((AC:Lire("base des quêtes")) or {}, zc.zone)) do
+    if C_QuestLog.IsQuestFlaggedCompleted(id) then t[id] = true end
+  end
+  return { zone = zc.zone, quetes = t }
+end
+
 -- La zone d'une quête (#13) : l'en-tête sous lequel le journal la range (en Classic, un nom de zone ; à vérifier en jeu
 -- contre GetRealZoneText).
 function monEtat()
@@ -221,6 +234,7 @@ function monEtat()
     ecartees = e.db.ecartees, -- les décisions de la Compagnie (#21), telles que je les connais
     zoneCompagnie = e.db.zoneCompagnie, -- la zone de la Compagnie (#24), telle que je la connais
     prerequis = mesPrerequis(), -- mes prérequis manquants pour cette zone (#27)
+    renduesZone = mesRenduesZone(), -- mes quêtes rendues de cette zone (#34)
     liste = e.db.compagnie and { date = e.db.compagnie.date or 0, membres = e.db.compagnie.membres }, -- #23
     auberge = auberge ~= "" and auberge or nil, liaison = f and f.auberge == auberge and f.date or nil,
     finRecharge = reste > 0 and math.ceil((GetServerTime() + reste) / 60) * 60 or nil }
@@ -1241,16 +1255,23 @@ local function fenetreMembres()
   return f
 end
 
--- L'onglet Chaînes (#33) : l'arbre des chaînes de la zone de la Compagnie (ns.arbreDesChaines), dessiné par l'Arbre du
--- socle ; chaque case : nom, niveau, couleur d'état ; bulle : donneur et endroit (base des quêtes), niveau requis, zone
--- d'un début hors zone ; clic droit : le menu du suivi. Sans zone choisie, le message le dit (pas de toile vide).
-local arbreChaines, zoneDessinee, deplies = nil, nil, {} -- deplies : les chaînes repliées que j'ai dépliées (local, jamais envoyé)
-local COULEURS = { aRendre = { 0.35, 0.80, 0.45 }, enCours = { 0.35, 0.60, 1.00 }, niveau = { 0.90, 0.30, 0.30 },
-  ecartee = { 0.45, 0.45, 0.45 }, neutre = { 0.60, 0.60, 0.62 } }
+-- L'onglet Chaînes (#33, #34) : l'arbre des chaînes de la zone de la Compagnie (ns.arbreDesChaines), dessiné par l'Arbre
+-- du socle ; chaque case : nom, niveau, couleur d'état (faite grisée, disponible cerclée, verrouillée terne, écartée
+-- barrée), la marque d'une quête inégale ; bulle : donneur et endroit (base des quêtes), niveau requis, zone d'un début
+-- hors zone, qui l'a faite ou prise, ce qui la bloque pour qui, à contrôler ; clic droit : le menu du suivi. Une chaîne
+-- faite ou écartée tient en une ligne : clic = déplier ; clic sur une de ses quêtes, dépliée = replier. Sans zone
+-- choisie, le message le dit (pas de toile vide).
+local dessinerChaines -- plus bas
+local arbreChaines, zoneDessinee, aControler, deplies = nil, nil, {}, {} -- deplies : les chaînes repliées que j'ai dépliées (local, jamais envoyé)
+local COULEURS = { faite = { 0.35, 0.80, 0.45 }, aRendre = { 0.35, 0.80, 0.45 }, enCours = { 0.35, 0.60, 1.00 },
+  disponible = { 1.00, 0.82, 0.00 }, verrouillee = { 0.40, 0.40, 0.40 }, niveau = { 0.90, 0.30, 0.30 },
+  ecartee = { 0.45, 0.45, 0.45 } }
+local ALPHA = { faite = 0.5, verrouillee = 0.65, ecartee = 0.6 }
+local LIBELLES = { faite = "Faite", aRendre = "À rendre", disponible = "Disponible", verrouillee = "Verrouillée", ecartee = "Écartée" }
 local function etatCase(n)
-  if n.horsZone then return "Hors zone : " .. nomZone(n.horsZone) end
-  local t = n.etat == "aRendre" and "À rendre" or n.etat == "ecartee" and "Écartée"
-    or n.etat == "niveau" and ("niveau %d requis"):format(n.requis) or nil
+  if n.repliee then return (n.etat == "ecartee" and "Écartée" or "Faite par tous") .. " · clic : déplier" end
+  if n.horsZone then return "Hors zone : " .. nomZone(n.horsZone) .. (n.etat == "faite" and " · faite" or "") end
+  local t = LIBELLES[n.etat] or n.etat == "niveau" and ("niveau %d requis"):format(n.requis) or nil
   if n.etat == "enCours" and n.objectifs then
     local c = {}
     for i, o in ipairs(n.objectifs) do c[i] = o.fait .. "/" .. o.total end
@@ -1261,6 +1282,11 @@ end
 local function bulleCase(c)
   local n, q = c.n, base()[c.n.quete] or {}
   GameTooltip:SetOwner(c, "ANCHOR_RIGHT")
+  if n.repliee then
+    GameTooltip:SetText(c.nom:GetText(), 1, 1, 1)
+    GameTooltip:AddLine("Clic : déplier la chaîne", 0.6, 0.6, 0.6)
+    return GameTooltip:Show()
+  end
   GameTooltip:SetText(titre(n.quete), 1, 1, 1)
   if q.niveau then
     GameTooltip:AddLine(("Niveau %d%s"):format(q.niveau, q.niveau_requis and (", requis %d"):format(q.niveau_requis) or ""), 0.8, 0.8, 0.8)
@@ -1271,6 +1297,19 @@ local function bulleCase(c)
     GameTooltip:AddLine(("Début hors de la zone : %s, %d quête%s à commencer par « %s »."):format(nomZone(n.horsZone), #ch,
       #ch > 1 and "s" or "", titre(ch[1])), 1, 0.82, 0, true)
   end
+  local ig = n.inegale -- qui l'a faite ou prise (#34)
+  if ig and #ig.faites > 0 then GameTooltip:AddLine("Faite par " .. noms(ig.faites) .. ".", 1, 0.5, 0.15, true) end
+  if ig and #ig.prises > 0 then GameTooltip:AddLine("Prise par " .. noms(ig.prises) .. ".", 1, 0.5, 0.15, true) end
+  for _, b in ipairs(n.bloque or {}) do
+    local quoi = {}
+    for i, p in ipairs(b.prerequis or {}) do quoi[i] = "« " .. titre(p) .. " »" end
+    GameTooltip:AddLine(("Bloquée pour %s : %s."):format(noms({ b.membre }), b.niveau and "niveau " .. b.niveau
+      or "d'abord " .. table.concat(quoi, " ou ")), 0.9, 0.3, 0.3, true)
+  end
+  if #aControler > 0 then
+    GameTooltip:AddLine("À contrôler : " .. noms(aControler) .. " (son état ne couvre pas cette zone).", 0.6, 0.6, 0.6, true)
+  end
+  if n.repliable then GameTooltip:AddLine("Clic : replier la chaîne", 0.6, 0.6, 0.6) end
   GameTooltip:AddLine("Clic droit : écarter ou remettre, quête personnelle", 0.6, 0.6, 0.6)
   GameTooltip:Show()
 end
@@ -1297,22 +1336,37 @@ local function caseChaine(n, c)
     c.barre:SetColorTexture(0.9, 0.3, 0.3, 0.9)
     c.barre:SetHeight(1)
     c.barre:SetPoint("LEFT", c.nom, "LEFT", 0, 0)
-    c:SetScript("OnClick", function(self, b) if b == "RightButton" then menuEcarter(self, self.n.quete) end end)
+    c.cercle = CreateFrame("Frame", nil, c, "BackdropTemplate") -- disponible : cerclée
+    c.cercle:SetAllPoints()
+    c.cercle:SetBackdrop({ edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 2 })
+    c.cercle:SetBackdropBorderColor(1, 0.82, 0, 0.9)
+    c.marque = c:CreateTexture(nil, "OVERLAY") -- inégale : une pastille, la bulle dit qui
+    c.marque:SetSize(8, 8)
+    c.marque:SetPoint("TOPRIGHT", -5, -5)
+    c.marque:SetColorTexture(1, 0.5, 0.15)
+    c:SetScript("OnClick", function(self, b)
+      local n = self.n
+      if b == "RightButton" then return not n.repliee and menuEcarter(self, n.quete) end
+      if n.repliee or n.repliable then deplies[n.band] = n.repliee or nil; dessinerChaines() end
+    end)
     c:SetScript("OnEnter", bulleCase)
     c:SetScript("OnLeave", function() GameTooltip:Hide() end)
   end
   c.n = n
   local k = COULEURS[n.etat] or COULEURS.neutre
   c.accent:SetColorTexture(k[1], k[2], k[3], 0.9)
-  c.nom:SetText(titre(n.quete))
+  c.nom:SetText(n.repliee and ("%s%s — %d quête%s"):format(n.etat == "faite" and "|TInterface\\RaidFrame\\ReadyCheck-Ready:0|t " or "",
+    titre(n.quete), n.n, n.n > 1 and "s" or "") or titre(n.quete))
   c.sous:SetText(etatCase(n))
   c.barre:SetShown(n.etat == "ecartee")
   c.barre:SetWidth(math.min(c.nom:GetStringWidth(), 170))
-  c:SetAlpha(n.etat == "ecartee" and 0.6 or 1)
+  c.cercle:SetShown(n.etat == "disponible")
+  c.marque:SetShown(n.inegale ~= nil)
+  c:SetAlpha(ALPHA[n.etat] or 1)
   return c
 end
 
-local function dessinerChaines()
+function dessinerChaines()
   local f = CompagnieChainesFrame
   if not (f and f:IsShown()) then return end
   local zc = e.db.zoneCompagnie
@@ -1326,10 +1380,11 @@ local function dessinerChaines()
   CompagnieChainesMessage:SetShown(msg ~= nil)
   if arbreChaines then arbreChaines.zone:SetShown(msg == nil) end
   if msg then return end
+  aControler = a.aControler
   for _, b in ipairs(a.bandes) do
     if b.seules then b.title = "Quêtes seules"
     elseif b.personnelle then b.title, b.color = "Personnelle · " .. prenom(b.personnelle), { 0.64, 0.21, 0.93 }
-    else b.title, b.color = titre(b.premiere), { 0.60, 0.60, 0.62 } end
+    else b.title, b.color = not b.repliee and titre(b.premiere) or nil, { 0.60, 0.60, 0.62 } end -- repliée : sa ligne le dit
   end
   -- Une zone a de longues chaînes : rétrécie pour tenir en largeur (l'Arbre), on ne lirait plus rien. Une zone
   -- nouvellement dessinée s'ouvre à taille réelle, en haut à gauche (glisser le fond pour la parcourir, molette pour

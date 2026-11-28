@@ -511,7 +511,7 @@ local ARBRE = {
 local function arbre(membres, ecartees, deplies)
   local a = ns.arbreDesChaines(membres, ecartees, ARBRE, FORET, deplies)
   a.case, a.bande = {}, {}
-  for _, c in ipairs(a.cases) do a.case[c.quete or c.key] = c end
+  for _, c in ipairs(a.cases) do a.case[c.repliee and c.key or c.quete] = c end
   for _, b in ipairs(a.bandes) do a.bande[b.key] = b end
   return a
 end
@@ -555,7 +555,7 @@ assert(a.case[940].horsZone == TELD and not a.case[937] and lie(a, 940, 400), "T
 assert(not a.case[700], "quête impossible pour tous : hors de l'arbre")
 assert(bandeDe(a, 800).personnelle == "Léo" and not bandeDe(a, 100).personnelle, "chaîne personnelle de Léo")
 -- États : en cours avec l'avancement commun (Léo, absent, compte avec son dernier état connu), à rendre, écartée (elle
--- l'emporte sur tout), niveau insuffisant avec le niveau requis ; le reste neutre.
+-- l'emporte sur tout), niveau insuffisant avec le niveau requis.
 a = arbre({ virgile({ [100] = fin(5, 8), [200] = fin(1, 1), [201] = fin(1, 1) }),
   leo({ [100] = fin(3, 8), [200] = fin(1, 1), [601] = fin(0, 2) }) }, { [601] = { ecartee = true, date = 1, par = "Léo" } })
 assert(a.case[100].etat == "enCours" and a.case[100].objectifs[1].fait == 3, "en cours : 3/8, l'absent compte")
@@ -563,7 +563,47 @@ assert(a.case[200].etat == "aRendre", "à rendre : finie chez tous")
 assert(a.case[201].etat == "enCours" and a.case[201].objectifs[1].fait == 0, "prise par un seul : en cours, l'autre à 0")
 assert(a.case[601].etat == "ecartee", "écartée, même prise")
 assert(a.case[210].etat == "niveau" and a.case[210].requis == 18, "niveau insuffisant : 18 requis")
-assert(a.case[600].etat == "neutre", "le reste : neutre")
+
+-- Ce que la Compagnie a fait (#34) : chaque membre envoie ses quêtes rendues de la zone (renduesZone, avec la zone
+-- couverte) ; faite (par tous), disponible (tous ont les prérequis et le niveau, personne ne l'a), verrouillée.
+local function rz(...) local t = {} for _, id in ipairs({ ... }) do t[id] = true end return { zone = FORET, quetes = t } end
+local function avec(m, r) m.renduesZone = r return m end
+a = arbre({ avec(virgile({ [102] = fin(0, 1) }), rz(200, 100, 940)), avec(leo({ [100] = fin(3, 8) }), rz(200, 940)) })
+assert(a.case[200].etat == "faite" and not a.case[200].inegale, "faite : rendue par tous")
+assert(a.case[940].etat == "faite", "le début hors zone, rendu par tous : fait")
+assert(a.case[201].etat == "disponible", "disponible : sans prérequis, personne ne l'a")
+assert(a.case[400].etat == "disponible", "disponible : Teldrassil fait par tous")
+assert(a.case[202].etat == "verrouillee", "verrouillée : 201 manque")
+local bl = a.case[202].bloque
+assert(#bl == 2 and bl[1].prerequis[1] == 201 and #bl[1].prerequis == 1, "ce qui la bloque, pour chacun : 201")
+-- Inégale : faite par Virgile, prise par Léo (absent : son dernier état connu) ; l'infobulle dit qui.
+local ig = a.case[100].inegale
+assert(a.case[100].etat == "enCours" and ig and ig.faites[1] == "Virgile" and ig.prises[1] == "Léo", "inégale : qui l'a faite, qui l'a prise")
+assert(a.case[102].inegale and a.case[102].inegale.prises[1] == "Virgile", "prise par un seul : inégale")
+-- Bloquée pour un seul membre : Léo n'a pas fait 100, prérequis de 101.
+bl = a.case[101].bloque
+assert(a.case[101].etat == "verrouillee" and #bl == 1 and bl[1].membre == "Léo" and bl[1].prerequis[1] == 100, "bloquée pour Léo seul")
+-- Niveau insuffisant pour un seul : le niveau requis, pour qui.
+bl = a.case[210].bloque
+assert(a.case[210].etat == "niveau" and bl[1].niveau == 18, "niveau 18 requis")
+-- À contrôler : l'état de Mira couvre une autre zone ; on ne lui prête rien (ni fait, ni bloqué), elle est nommée.
+a = arbre({ avec(virgile(), rz(200)), avec(leo(), rz(200)), avec({ nom = "Mira", niveau = 10, quetes = {} }, { zone = 40, quetes = {} }) })
+assert(#a.aControler == 1 and a.aControler[1] == "Mira", "Mira : à contrôler")
+assert(a.case[200].etat == "faite" and a.case[201].etat == "disponible", "rien prêté à Mira")
+assert(#arbre({ virgile(), leo() }).aControler == 2, "sans le champ : à contrôler")
+-- Repli : une chaîne faite par tous se replie en une ligne (son nom, son nombre de quêtes) ; dépliée au clic (deplies,
+-- local) ; une chaîne écartée aussi.
+local toutes = rz(100, 101, 102)
+a = arbre({ avec(virgile(), toutes), avec(leo(), toutes) }, { [800] = { ecartee = true, date = 1, par = "Léo" } })
+local loups = a.bande.B100
+local ligne = a.case["CB100"]
+assert(not a.case[100] and not a.case[101] and ligne and ligne.repliee and ligne.n == 3 and ligne.quete == 100 and ligne.etat == "faite", "chaîne faite : une ligne")
+assert(loups.repliee, "la bande est repliée")
+local pal = a.case["CB800"]
+assert(pal and pal.repliee and pal.etat == "ecartee" and pal.n == 2 and not a.case[801], "chaîne écartée : une ligne, barrée")
+a = arbre({ avec(virgile(), toutes), avec(leo(), toutes) }, nil, { B100 = true })
+assert(a.case[100] and a.case[101] and a.case[102] and a.case[101].repliable and not a.case["CB100"], "dépliée : ses quêtes, repliables")
+assert(not a.case[200].repliable, "une chaîne pas finie ne se replie pas")
 
 print("Compagnie : arbre des chaînes OK")
 
@@ -844,8 +884,8 @@ assert(echanges(c.aFaire) == "donner:Mira:1:Léo donner:Virgile:5:Léo recevoir:
 -- Le stock part avec l'objectif fini, au-delà du total seulement ; reçu tel quel ; un stock sur un objectif pas fini, rejeté.
 local recuS = ns.decoder(ns.encoder({ niveau = 5, quetes = { [7] = stock(8, 13), [8] = stock(5, 5) }, rendues = {} }))
 assert(recuS.quetes[7].objectifs[1].stock == 13 and recuS.quetes[8].objectifs[1].stock == nil, "le stock au-delà du total")
-assert(ns.decoder("5#7:0:5/8/9############") == nil and ns.decoder("5#7:1:8/8/8############") == nil
-  and ns.decoder("5#7:1:8/8/9############").quetes[7].objectifs[1].stock == 9, "stock : fini et au-delà du total")
+assert(ns.decoder("5#7:0:5/8/9#############") == nil and ns.decoder("5#7:1:8/8/8#############") == nil
+  and ns.decoder("5#7:1:8/8/9#############").quetes[7].objectifs[1].stock == 9, "stock : fini et au-delà du total")
 
 -- Le texte des objectifs n'est jamais envoyé (code de grammaire du jeu « |4… ; ») : seulement les nombres.
 local avecTexte = { niveau = 12, quetes = { [7] = { finie = false, objectifs = {
@@ -858,7 +898,7 @@ assert(ns.libelle("Raptor flagellant : \1 |4personnage tué:personnages tués;")
 
 -- Les champs ajoutés après le 10e, vides : APRES_ZONE, ceux après la zone de la Compagnie (#27 : les prérequis
 -- manquants) ; FIN, tous (#24 : la zone, puis APRES_ZONE). Un état à 10 champs + FIN est complet.
-local APRES_ZONE = "###" -- #27 : les prérequis manquants ; #23 : la liste des membres ; #6 : les origines
+local APRES_ZONE = "####" -- #27 : les prérequis manquants ; #23 : la liste des membres ; #34 : les rendues de la zone ; #6 : les origines
 local FIN = "#" .. APRES_ZONE
 -- Lecture stricte : un champ mal formé, et tout l'état est rejeté (jamais exécuté ni interprété). Un seul format (bêta) :
 -- un état à quatre champs (celui de #13, sans abandons) est rejeté aussi.
@@ -882,8 +922,9 @@ for _, mauvais in ipairs({ "12:95#", "12:95:#", "12:x:2#", "12:95:2:1#", "12::2#
 end
 -- Un état à cinq champs (celui de #5, sans foyer) est rejeté (#9) ; à huit (celui de #9, sans quêtes d'avant) aussi (#20).
 assert(ns.decoder("35#1:0####") == nil and ns.decoder("35#1:0######") == nil and ns.decoder("35#1:0########") == nil
-  and ns.decoder("35#1:0#########") == nil and ns.decoder("35#1:0##########") == nil and ns.decoder("35#1:0########" .. FIN),
-  "cinq, huit, dix (avant #24), onze (avant #27) et douze champs (avant #23) : rejeté ; le format en cours : lu")
+  and ns.decoder("35#1:0#########") == nil and ns.decoder("35#1:0##########") == nil and ns.decoder("35#1:0########" .. FIN)
+  and ns.decoder("35#1:0############") == nil,
+  "cinq, huit, dix (avant #24), onze (avant #27), douze (avant #23) et quatorze champs (avant #34) : rejeté ; le format en cours : lu")
 
 -- Les quêtes d'avant et les quêtes rendues avant l'entrée (#20) partent avec l'état : encodage puis décodage → identique.
 local avecAvant = { niveau = 14, quetes = { [PATTES] = { finie = false, objectifs = {} }, [2002] = { finie = true, objectifs = {} } },
@@ -961,11 +1002,13 @@ for i = 1, 20 do plein.ecartees[93000 + i] = { ecartee = i % 3 > 0, date = 17640
 plein.zoneCompagnie = { zone = 16941, date = 1764000000, par = "Éléonorette" } -- #24
 plein.prerequis = { zone = 16941, manquants = {} } -- #27
 for i = 1, 8 do plein.prerequis.manquants[i] = { quete = 95000 + i, prerequis = 96000 + i } end
+plein.renduesZone = { zone = 16941, quetes = {} } -- #34 : la borne, 100 quêtes rendues de la zone
+for i = 1, 100 do plein.renduesZone.quetes[97000 + i] = true end
 plein.liste = { date = 1764000000, membres = {} } -- #23 : cinq membres aux noms longs
 for i = 1, 5 do plein.liste.membres[i] = { guid = "Player-4395-0A1B2C3" .. i, nom = "Éléonorette Bourselourdé" } end
 local idC = "Player-4395-0A1B2C3D-1764000000"
 local parts = ns.morceaux(idC, ns.encoder(plein), 99)
-assert(#parts >= 1 and #parts <= 10, "le pire cas réaliste tient : " .. #parts .. " morceaux, " .. #ns.encoder(plein) .. " octets")
+assert(#parts >= 1 and #parts <= 14, "le pire cas réaliste tient : " .. #parts .. " morceaux, " .. #ns.encoder(plein) .. " octets")
 -- Les origines (#6) remplissent la place qui reste : toutes les quêtes non partageables, relevées avec un PNJ au nom
 -- long, le pire cas tient toujours, avec les premières origines.
 local avecToutes = {}
@@ -977,8 +1020,8 @@ for id, q in pairs(plein.quetes) do
 end
 local n = #ns.morceaux(idC, ns.encoder(avecToutes), 99)
 local recu = assert(ns.decoder(ns.encoder(avecToutes)), "le pire cas avec origines se décode")
-assert(n >= 1 and n <= 10 and recu.quetes[90001].origine, "le pire cas avec origines tient : " .. n .. " morceaux, la 1re origine part")
-print(("Compagnie : pire cas réaliste, %d octets, %d morceaux sur 10"):format(#ns.encoder(plein), #parts))
+assert(n >= 1 and n <= 14 and recu.quetes[90001].origine, "le pire cas avec origines tient : " .. n .. " morceaux, la 1re origine part")
+print(("Compagnie : pire cas réaliste, %d octets, %d morceaux sur 14"):format(#ns.encoder(plein), #parts))
 
 -- Écarter, Remettre (#21) : une décision datée de la Compagnie. Les décisions reçues avec un état : la plus récente
 -- l'emporte, quête par quête ; fusionner rend celles qui ont changé (pour le message dans le chat).
@@ -1023,15 +1066,36 @@ assert(ns.decoder("12#########148:" .. (100000 + 86401) .. ":Léo" .. APRES_ZONE
 local avecPrerequis = { niveau = 12, quetes = {}, rendues = {}, ecartees = {}, avant = {}, renduesAvant = {},
   prerequis = { zone = 148, manquants = { { quete = 952, prerequis = 940 }, { quete = 2050, prerequis = 2052 } } } }
 corps = ns.encoder(avecPrerequis)
-assert(corps:find("##148=952:940,2050:2052##$"), "les prérequis, en 12e champ : " .. corps)
+assert(corps:find("##148=952:940,2050:2052###$"), "les prérequis, en 12e champ : " .. corps)
 assert(pareil(ns.decoder(corps), avecPrerequis), "avec les prérequis : identique (" .. corps .. ")")
 avecPrerequis.prerequis.manquants = {}
 corps = ns.encoder(avecPrerequis)
-assert(corps:find("##148##$") and pareil(ns.decoder(corps), avecPrerequis), "rien ne manque, la zone couverte : " .. corps)
+assert(corps:find("##148###$") and pareil(ns.decoder(corps), avecPrerequis), "rien ne manque, la zone couverte : " .. corps)
 for _, f in ipairs({ "x", "0", "148=", "148=952", "148=952:", "148=a:940", "148=952:940,", "148:952:940", "=952:940",
   "148=" .. ("1:2,"):rep(8) .. "1:2" }) do
-  assert(ns.decoder("12##########" .. f .. "##") == nil, "prérequis rejetés : " .. f)
+  assert(ns.decoder("12##########" .. f .. "###") == nil, "prérequis rejetés : " .. f)
 end
+-- Mes quêtes rendues de la zone de la Compagnie (#34) partent avec l'état, avec la zone qu'elles couvrent, en 14e champ
+-- (avant les origines) : encodage puis décodage → identique.
+local avecRendues = { niveau = 12, quetes = {}, rendues = {}, ecartees = {}, avant = {}, renduesAvant = {},
+  renduesZone = { zone = 12, quetes = { [100] = true, [101] = true, [940] = true } } }
+corps = ns.encoder(avecRendues)
+assert(corps:find("#12=100,101,940#$"), "les rendues de la zone, en 14e champ : " .. corps)
+assert(pareil(ns.decoder(corps), avecRendues), "avec les rendues de la zone : identique (" .. corps .. ")")
+avecRendues.renduesZone.quetes = {}
+corps = ns.encoder(avecRendues)
+assert(corps:find("#12#$") and pareil(ns.decoder(corps), avecRendues), "rien de rendu, la zone couverte : " .. corps)
+local cent = {}
+for i = 1, 101 do cent[i] = 1000 + i end
+for _, f in ipairs({ "x", "0", "12=", "12=a", "12=1,,2", "12=1,", "12:1", "=1", "12=1,1", "12=" .. table.concat(cent, ",") }) do
+  assert(ns.decoder("12#############" .. f .. "#") == nil, "rendues de la zone rejetées : " .. f:sub(1, 20))
+end
+table.remove(cent)
+assert(ns.decoder("12#############12=" .. table.concat(cent, ",") .. "#"), "100 : la borne, acceptée")
+-- Au-delà de la borne, les 100 premières partent (l'état reste lisible).
+for i = 1, 150 do avecRendues.renduesZone.quetes[2000 + i] = true end
+lu = assert(ns.decoder(ns.encoder(avecRendues)), "150 rendues : lisible")
+assert(compter(lu.renduesZone.quetes) == 100 and lu.renduesZone.quetes[2001] and not lu.renduesZone.quetes[2150], "les 100 premières")
 -- Au-delà de MAX_PREREQUIS (8), les premiers seuls partent.
 for i = 1, 12 do avecPrerequis.prerequis.manquants[i] = { quete = 3000 + i, prerequis = 4000 + i } end
 assert(#ns.decoder(ns.encoder(avecPrerequis)).prerequis.manquants == 8, "les 8 premiers partent")
@@ -1083,9 +1147,9 @@ assert(ns.encoder({ niveau = 2, quetes = { [7] = { finie = false, objectifs = {}
 -- position ; un nom comme une zone, sans « @ » ; une position entière, x et y de 0 à 100).
 for _, f in ipairs({ "8=Dughan", "6=Dughan", "7=Dughan;7=Dughan", "7", "7=", "7@", "7=@1:2:3", "7Dughan", "7=a|b", "7=a@b@1:2:3",
   "7@1:2", "7@1:2:3:4", "7@0:2:3", "7@1:101:3", "7@1:2:-3", "7@x:2:3", "7=" .. ("x"):rep(49), "7=Dughan;" }) do
-  assert(ns.decoder("12#6:0;7:0n############" .. f) == nil, "origine rejetée : " .. f:sub(1, 20))
+  assert(ns.decoder("12#6:0;7:0n#############" .. f) == nil, "origine rejetée : " .. f:sub(1, 20))
 end
-assert(ns.decoder("12#6:0;7:0n############7=Dughan@1:2:3"), "bien formée : acceptée")
+assert(ns.decoder("12#6:0;7:0n#############7=Dughan@1:2:3"), "bien formée : acceptée")
 for _, q in ipairs({ "7:0x", "7:0nn", "7:0np", "7:n", "7:2" }) do assert(ns.decoder("12#" .. q .. "########" .. FIN) == nil, "drapeau rejeté : " .. q) end
 
 -- La zone de chaque quête (#13 : l'en-tête de zone de mon journal) part avec l'état : encodage puis décodage → identique.
@@ -1340,12 +1404,12 @@ assert(#partis == 4, "sans Compagnie : rien")
 local avecListe = { niveau = 12, quetes = {}, rendues = {}, ecartees = {}, avant = {}, renduesAvant = {},
   liste = { date = 1764000000, membres = { { guid = "Player-4395-0A1B2C3D", nom = "Virgile Marteau" }, { guid = "Player-4395-0A1B2C3E", nom = "Léo Lame" } } } }
 corps = ns.encoder(avecListe)
-assert(corps:find("#1764000000=4395%-0A1B2C3D:Virgile Marteau,4395%-0A1B2C3E:Léo Lame#$"), "la liste, en 13e champ : " .. corps)
+assert(corps:find("#1764000000=4395%-0A1B2C3D:Virgile Marteau,4395%-0A1B2C3E:Léo Lame##$"), "la liste, en 13e champ : " .. corps)
 assert(pareil(ns.decoder(corps), avecListe), "avec la liste : identique (" .. corps .. ")")
 for _, f in ipairs({ "x", "1764000000", "1764000000=", "1764000000=1-A:Léo", "1764000000=1-A:Léo,1-A:Mira", "1764000000=1-A:,1-B:Mira",
   "1764000000=1-A:L|o,1-B:Mira", "1764000000=Player-1-A:Léo,1-B:Mira", "=1-A:Léo,1-B:Mira",
   "1764000000=1-A:A,1-B:B,1-C:C,1-D:D,1-E:E,1-F:F" }) do
-  assert(ns.decoder("12############" .. f .. "#") == nil, "liste rejetée : " .. f)
+  assert(ns.decoder("12############" .. f .. "##") == nil, "liste rejetée : " .. f)
 end
 
 -- Inviter (#23) : Virgile et Léo sont une Compagnie, Mira est dans le groupe. Virgile invite Mira : proposition ;
