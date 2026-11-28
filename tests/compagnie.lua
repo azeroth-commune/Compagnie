@@ -1297,6 +1297,52 @@ test("foyer et pierre se dessinent depuis une Compagnie fabriquée, sans nommer 
 end)
 
 ---------------------------------------------------------------------------------------------------
+-- L'objet de quête : son bouton à gauche du titre de sa quête, dans le suivi.
+
+test("une quête qui a un objet à utiliser montre son bouton à gauche de son texte, et pas les autres", function()
+    local g = { info = GetQuestLogSpecialItemInfo, cd = GetQuestLogSpecialItemCooldown }
+    local indexPattes
+    GetQuestLogSpecialItemInfo = function(i)
+        if i == indexPattes then return "|cffffffff|Hitem:5397:0|h[Défense de l'ours]|h|r", 134400, 3, false end
+    end
+    GetQuestLogSpecialItemCooldown = function() return 0, 0, 1 end
+    local ok, err = pcall(function()
+        avecJournal({ pattes(3), RAPTORS }, function()
+            indexPattes = C_QuestLog.GetLogIndexForQuestID(1001)
+            fabriquer({ guid = LEO, nom = "Léo Lame" })
+            CompagnieDB.etats = { [LEO] = { niveau = 5, rendues = {}, ecartees = {}, quetes = {
+                [1001] = { finie = false, objectifs = { { fait = 0, total = 8 } } },
+                [95789] = { finie = false, objectifs = { { fait = 0, total = 10 } } } } } }
+            avecGroupe({}, false, function()
+                charger()
+                local b = CompagnieObjet1
+                assertTrue(b and b:IsShown(), "le bouton de l'objet est sur le suivi")
+                assertTrue(not (CompagnieObjet2 and CompagnieObjet2:IsShown()), "les raptors n'ont pas d'objet")
+                assertEquals("item", b:GetAttribute("type"))
+                assertEquals("item:5397", b:GetAttribute("item"), "le clic utilise l'objet de la quête")
+                assertEquals("3", b.Count:GetText())
+                local l
+                for i = 1, 5 do
+                    local x = _G["CompagnieSuiviLigne" .. i]
+                    if x and x:IsShown() and contient(x.texte:GetText(), "Les pattes de loup") then l = x end
+                end
+                assertTrue(l ~= nil, suivi())
+                assertTrue(math.abs(b:GetTop() - l:GetTop()) < 1, "à la hauteur du titre")
+                assertTrue(b:GetRight() <= l.texte:GetLeft() + 1, "à gauche du texte")
+                -- La quête finie : le jeu ne montre plus l'objet, le bouton part.
+                indexPattes = nil
+                evenement("QUEST_LOG_UPDATE")
+                ecouler(1)
+                assertTrue(not b:IsShown(), "plus d'objet : plus de bouton")
+            end)
+        end)
+    end)
+    GetQuestLogSpecialItemInfo, GetQuestLogSpecialItemCooldown = g.info, g.cd
+    eteindre()
+    if not ok then error(err, 0) end
+end)
+
+---------------------------------------------------------------------------------------------------
 -- Partager (#22) : le jeu ne partage que dans un clic (OneForAll bloqué depuis un minuteur sur Forever) ; un seul bouton
 -- « Partager », chaque clic partage la suivante.
 

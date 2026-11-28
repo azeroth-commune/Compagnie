@@ -862,6 +862,13 @@ end
 -- Clic droit sur une quête de la Compagnie : le menu Écarter. La molette passe au cadre qui défile ; le glisser déplace
 -- le suivi, comme son en-tête.
 local lignesSuivi = {}
+-- L'objet de quête à utiliser (celui que le suivi du jeu montre) : l'index de la quête dans mon journal quand elle en a
+-- un, sinon nil. Fini : seulement si le jeu le montre encore une fois la quête finie.
+local OBJET = 32
+local function objetDeQuete(id)
+  local i = id and C_QuestLog.GetLogIndexForQuestID(id)
+  if i and QuestUtil.QuestShowsItemByIndex(i, C_QuestLog.IsComplete(id)) then return i end
+end
 local function placerLignes(blocs)
   local f, y = CompagnieSuiviFrame, 0
   for i, b in ipairs(blocs) do
@@ -887,9 +894,12 @@ local function placerLignes(blocs)
       l:SetScript("OnLeave", function() GameTooltip:Hide(); eteindreCarte() end)
       lignesSuivi[i] = l
     end
-    l.quete, l.sansEcarter, l.carte = b.quete, b.sansEcarter, b.carte
+    l.quete, l.sansEcarter, l.carte, l.objet = b.quete, b.sansEcarter, b.carte, objetDeQuete(b.carte)
+    local dx = l.objet and OBJET or 0 -- la place de l'objet de quête, à gauche du texte
+    l.texte:SetPoint("TOPLEFT", dx, 0)
+    l.texte:SetWidth(244 - dx)
     l.texte:SetText(b.texte)
-    local h = math.max(1, l.texte:GetStringHeight())
+    local h = math.max(1, l.texte:GetStringHeight(), l.objet and 26 or 0)
     l:SetHeight(h)
     l:ClearAllPoints()
     l:SetPoint("TOPLEFT", 0, -y)
@@ -899,6 +909,66 @@ local function placerLignes(blocs)
   for i = #blocs + 1, #lignesSuivi do lignesSuivi[i]:Hide() end
   return y
 end
+
+-- Les boutons des objets de quête (CompagnieObjet1…), à gauche du titre de leur quête : un clic utilise l'objet, comme
+-- le bouton du suivi du jeu. Sécurisés, donc enfants de UIParent et posés hors combat sur les lignes visibles (comme la
+-- pierre) ; en combat, seule leur recharge est mise à jour.
+-- ponytail: en combat ils ne suivent ni le défilement ni les lignes ; replacés à la sortie du combat.
+local objets = {}
+local function placerObjets()
+  if InCombatLockdown() then
+    for _, b in ipairs(objets) do
+      if b:IsShown() then CooldownFrame_Set(b.Cooldown, GetQuestLogSpecialItemCooldown(b.index)) end
+    end
+    return
+  end
+  local defil, n = CompagnieSuiviDefil, 0
+  for _, l in ipairs(lignesSuivi) do
+    local i, haut = l:IsVisible() and l.objet, l:GetTop()
+    local lien, icone, charges
+    if i then lien, icone, charges = GetQuestLogSpecialItemInfo(i) end
+    local id = lien and lien:match("item:(%d+)")
+    if i and id and haut and haut <= defil:GetTop() + 1 and haut - 26 >= defil:GetBottom() - 1 then
+      n = n + 1
+      local b = objets[n]
+      if not b then
+        b = CreateFrame("Button", "CompagnieObjet" .. n, UIParent, "SecureActionButtonTemplate")
+        b:SetSize(26, 26)
+        b:SetFrameStrata("MEDIUM") -- au-dessus du suivi (LOW)
+        b.icone = b:CreateTexture(nil, "BORDER")
+        b.icone:SetAllPoints()
+        b:SetNormalAtlas("UI-QuestTrackerButton-QuestItem-Frame") -- le cadre du bouton du suivi du jeu
+        b:GetNormalTexture():ClearAllPoints()
+        b:GetNormalTexture():SetSize(42, 42)
+        b:GetNormalTexture():SetPoint("CENTER")
+        b:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
+        b.Count = b:CreateFontString(nil, "ARTWORK", "NumberFontNormal")
+        b.Count:SetPoint("BOTTOMRIGHT", -3, 2)
+        b.Cooldown = CreateFrame("Cooldown", nil, b, "CooldownFrameTemplate")
+        b.Cooldown:SetAllPoints()
+        b:SetAttribute("type", "item")
+        b:RegisterForClicks("AnyDown", "AnyUp")
+        b:SetAttribute("useOnKeyDown", GetCVarBool("ActionButtonUseKeyDown"))
+        b:SetScript("OnEnter", function(self)
+          GameTooltip:SetOwner(self, "ANCHOR_LEFT")
+          GameTooltip:SetQuestLogSpecialItem(self.index)
+        end)
+        b:SetScript("OnLeave", GameTooltip_Hide)
+        objets[n] = b
+      end
+      b.index = i
+      b:SetAttribute("item", "item:" .. id)
+      b.icone:SetTexture(icone)
+      b.Count:SetText(charges and charges > 1 and charges or "")
+      CooldownFrame_Set(b.Cooldown, GetQuestLogSpecialItemCooldown(i))
+      b:ClearAllPoints()
+      b:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", l:GetLeft(), haut)
+      b:Show()
+    end
+  end
+  for k = n + 1, #objets do objets[k]:Hide() end
+end
+local function placer() placerPierre(); placerObjets() end
 
 local function dessinerSuivi(calc, presents, unites)
   local f = CompagnieSuiviFrame
@@ -913,7 +983,7 @@ local function dessinerSuivi(calc, presents, unites)
   CompagnieSuiviZone:SetWidth(CompagnieSuiviZone:GetFontString():GetStringWidth() + 22)
   CompagnieSuiviContenu:SetHeight(math.max(1, h))
   f:SetHeight(math.min(156 + hAFaire + h, UIParent:GetHeight() * 0.6))
-  placerPierre()
+  placer()
   if CompagniePierre then CompagniePierre:SetText(calc.pierre > 0 and "Foyer dans " .. duree(calc.pierre) or "Rentrer au foyer") end
 end
 
@@ -1074,10 +1144,11 @@ local function ouvrirSuivi()
     contenu:SetSize(244, 1)
     defil:SetScrollChild(contenu)
     -- Fermée par son « – » (pas quand l'interface entière est cachée, Alt-Z : elle reste « montrée ») : mode éteint.
-    f:HookScript("OnShow", placerPierre)
-    hooksecurefunc(f, "StopMovingOrSizing", placerPierre) -- fin d'un déplacement, par l'en-tête ou une ligne
+    defil:HookScript("OnVerticalScroll", placerObjets)
+    f:HookScript("OnShow", placer)
+    hooksecurefunc(f, "StopMovingOrSizing", placer) -- fin d'un déplacement, par l'en-tête ou une ligne
     f:HookScript("OnHide", function(self)
-      placerPierre()
+      placer()
       if masquageInterne or self:IsShown() then return end
       e.db.modeCompagnie = false
       appliquerMode()
@@ -1725,7 +1796,7 @@ cadre:SetScript("OnEvent", function(_, ev, a1, texte, canal, expediteur)
     if ev == "ZONE_CHANGED_NEW_AREA" then suggererZone() end
   elseif ev == "PLAYER_REGEN_ENABLED" then
     if differe and ObjectiveTrackerFrame then appliquerSuiviDuJeu(ObjectiveTrackerFrame) end
-    placerPierre()
+    placer()
   elseif ev == "QUEST_PROGRESS" or ev == "QUEST_COMPLETE" then
     remise = GetQuestID()
     majBandeau()
