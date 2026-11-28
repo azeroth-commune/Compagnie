@@ -164,6 +164,19 @@ local function mesPrerequis()
     select(3, UnitRace("player")), select(3, UnitClass("player")), ns.ecarteesEffectives(e.db.ecartees, q)) }
 end
 
+-- Mes quêtes rendues de la zone de la Compagnie (#34), pour l'arbre des chaînes des autres : celles de l'arbre
+-- (ns.quetesDeLaZone) que le jeu dit faites, vues par l'add-on ou d'avant mon entrée.
+-- ponytail: toute la base parcourue à chaque lecture de mon état, comme mesPrerequis.
+local function mesRenduesZone()
+  local zc = e.db.zoneCompagnie
+  if not zc then return nil end
+  local t = {}
+  for id in pairs(ns.quetesDeLaZone((AC:Lire("base des quêtes")) or {}, zc.zone)) do
+    if C_QuestLog.IsQuestFlaggedCompleted(id) then t[id] = true end
+  end
+  return { zone = zc.zone, quetes = t }
+end
+
 -- La zone d'une quête (#13) : l'en-tête sous lequel le journal la range (en Classic, un nom de zone ; à vérifier en jeu
 -- contre GetRealZoneText).
 function monEtat()
@@ -221,6 +234,7 @@ function monEtat()
     ecartees = e.db.ecartees, -- les décisions de la Compagnie (#21), telles que je les connais
     zoneCompagnie = e.db.zoneCompagnie, -- la zone de la Compagnie (#24), telle que je la connais
     prerequis = mesPrerequis(), -- mes prérequis manquants pour cette zone (#27)
+    renduesZone = mesRenduesZone(), -- mes quêtes rendues de cette zone (#34)
     liste = e.db.compagnie and { date = e.db.compagnie.date or 0, membres = e.db.compagnie.membres }, -- #23
     auberge = auberge ~= "" and auberge or nil, liaison = f and f.auberge == auberge and f.date or nil,
     finRecharge = reste > 0 and math.ceil((GetServerTime() + reste) / 60) * 60 or nil }
@@ -243,7 +257,8 @@ local function vider()
   if #file > 0 then vidage = true; C_Timer.After(1, vider) end
 end
 local function poster(texte, canal, cible)
-  if #file >= 50 then return false end -- file pleine (débit tenu longtemps) : refusé, l'état repartira (Etats.lua)
+  -- file pleine (débit tenu longtemps) : refusé, l'état repartira (Etats.lua) ; 60 : un état de 14 morceaux à 4 membres
+  if #file >= 60 then return false end
   file[#file + 1] = { texte = texte, canal = canal, cible = cible }
   if not vidage then vider() end
   return true
@@ -473,9 +488,11 @@ local function suggererZone()
   jeu.dire(("Tu entres en %s, qui n'est pas la zone de la Compagnie%s : « /compagnie zone » la choisit."):format(ici,
     zc and " (" .. nomZone(zc.zone) .. ")" or ""))
 end
+local ouvrir -- plus bas : la fenêtre de la Compagnie (1 : l'onglet Chaînes)
 local function menuZone(owner)
   local niveau, actuelle = calculer().niveau, e.db.zoneCompagnie and e.db.zoneCompagnie.zone
   MenuUtil.CreateContextMenu(owner, function(_, root)
+    if actuelle then root:CreateButton("Voir les chaînes", function() ouvrir(1) end) end -- l'arbre des chaînes (#33)
     root:CreateTitle("Zone de la Compagnie")
     if root.SetScrollMode then root:SetScrollMode(400) end
     for _, z in ipairs(ns.zones(base(), niveau)) do
@@ -485,6 +502,9 @@ local function menuZone(owner)
     end
   end)
 end
+-- Écartée pour de bon : par une décision, ou emportée avec la chaîne d'une quête écartée (#27).
+local function ecartees() return ns.ecarteesEffectives(e.db.ecartees, base()) end
+local function ecartee(id) return ecartees()[id] ~= nil end
 StaticPopupDialogs.COMPAGNIE_ECARTER = {
   text = "Écarter « %s » ? La Compagnie ne la fera pas : elle sort du suivi de tous. « Remettre » dans la fenêtre de la " ..
     "Compagnie, onglet Écartées.",
@@ -510,7 +530,8 @@ end
 local function menuEcarter(owner, id, sansEcarter)
   MenuUtil.CreateContextMenu(owner, function(_, root)
     root:CreateTitle(titre(id))
-    if not sansEcarter then root:CreateButton("Écarter pour la Compagnie", function() proposerEcart(id) end) end
+    if ecartee(id) then root:CreateButton("Remettre dans la Compagnie", function() decider(id, false) end) -- l'arbre (#33)
+    elseif not sansEcarter then root:CreateButton("Écarter pour la Compagnie", function() proposerEcart(id) end) end
     if C_QuestLog.GetLogIndexForQuestID(id) then
       root:CreateCheckbox("Quête personnelle (à moi seul)", function() return e.db.personnelles and e.db.personnelles[id] end,
         function() basculerPersonnelle(id) end)
@@ -525,9 +546,6 @@ local function bulleEcarter(owner, details) -- details : ce que dit la ligne en 
   else GameTooltip:SetText("Clic droit : écarter pour la Compagnie", 1, 1, 1, 1, true) end
   GameTooltip:Show()
 end
--- Écartée pour de bon : par une décision, ou emportée avec la chaîne d'une quête écartée (#27).
-local function ecartees() return ns.ecarteesEffectives(e.db.ecartees, base()) end
-local function ecartee(id) return ecartees()[id] ~= nil end
 
 -- L'acceptation automatique (#26) : à l'ouverture de la fenêtre d'une quête (QUEST_DETAIL : partage ou PNJ), acceptée si
 -- un autre membre l'a dans son journal (dernier état connu, corrigé par le jeu pour mon groupe : un partage arrive avant
@@ -1123,8 +1141,9 @@ local function basculerMode()
 end
 
 ---------------------------------------------------------------------------------------------------
--- La fenêtre, en deux onglets : Membres (présent ou absent, « Retirer » sur les autres ; « Fonder » ou « Quitter ») et
--- Écartées (#21 : les quêtes écartées, qui l'a décidé, « Remettre ») ; le mode Compagnie, son état sur son bouton.
+-- La fenêtre de la Compagnie, en trois onglets : Chaînes (#33 : l'arbre des chaînes, une fenêtre à part, grande),
+-- Membres (présent ou absent, « Retirer » sur les autres ; « Fonder » ou « Quitter ») et Écartées (#21 : les quêtes
+-- écartées, qui l'a décidé, « Remettre »), les deux vues de CompagnieFrame ; le mode Compagnie, son état sur son bouton.
 local tableau, vide, boutonFonder, boutonQuitter, boutonMode, tableauEcartees, videEcartees, panneaux
 -- Inviter (#23) : la proposition part au groupe du jeu ; sans réponse au bout du délai, l'invitation tombe.
 local function inviter(guid)
@@ -1183,11 +1202,6 @@ function dessiner()
   videEcartees:SetShown(#ecartees == 0)
 end
 
-local function onglet(i)
-  for k, p in ipairs(panneaux) do p:SetShown(k == i) end
-  PanelTemplates_SetTab(CompagnieFrame, i)
-end
-
 local function bouton(f, texte, fn, largeur, nom)
   local b = CreateFrame("Button", nom, f, "UIPanelButtonTemplate")
   b:SetSize(largeur or 100, 22)
@@ -1197,45 +1211,239 @@ local function bouton(f, texte, fn, largeur, nom)
   return b
 end
 
-local function ouvrir()
-  if not CompagnieFrame then
-    local f = AC.Fenetre("CompagnieFrame", "Compagnie", 400, 230)
-    panneaux = {}
-    for i = 1, 2 do panneaux[i] = CreateFrame("Frame", nil, f); panneaux[i]:SetAllPoints() end
-    local largeur
-    tableau, largeur = AC.Tableau(panneaux[1], COLONNES, { name = "membres", bottom = 44 })
-    f:SetWidth(largeur + 50)
-    vide = panneaux[1]:CreateFontString("CompagnieVide", "OVERLAY", "GameFontHighlight")
-    vide:SetPoint("TOPLEFT", 14, -70)
-    vide:SetPoint("TOPRIGHT", -14, -70)
-    vide:SetJustifyH("LEFT")
-    vide:SetText("Pas de Compagnie. Dans un groupe du jeu, « Fonder » la propose à chaque personnage du groupe ; " ..
-      "elle a de 2 à 5 membres.")
-    boutonFonder = bouton(panneaux[1], "Fonder", fonder)
-    boutonQuitter = bouton(panneaux[1], "Quitter", function() ns.quitter(e, jeu) end)
-    boutonMode = bouton(f, "Mode Compagnie", basculerMode, 170, "CompagnieModeBouton")
-    boutonMode:ClearAllPoints()
-    boutonMode:SetPoint("BOTTOMRIGHT", -14, 12)
-    tableauEcartees = AC.Tableau(panneaux[2], COLONNES_ECARTEES, { name = "ecartees", bottom = 44 })
-    videEcartees = panneaux[2]:CreateFontString("CompagnieEcarteesVide", "OVERLAY", "GameFontHighlight")
-    videEcartees:SetPoint("TOPLEFT", 14, -70)
-    videEcartees:SetPoint("TOPRIGHT", -14, -70)
-    videEcartees:SetJustifyH("LEFT")
-    videEcartees:SetText("Aucune quête écartée. Pour écarter une quête : clic droit sur elle dans le suivi ou la liste " ..
-      "À faire.")
-    f.Tabs = {}
-    for i, nom in ipairs({ "Membres", "Écartées" }) do
-      local t = CreateFrame("Button", "CompagnieFrameTab" .. i, f, "PanelTabButtonTemplate")
-      t:SetID(i)
-      t:SetText(nom)
-      t:SetScript("OnClick", function() onglet(i) end)
-      f.Tabs[i] = t
-    end
-    f.Tabs[1]:SetPoint("TOPLEFT", f, "BOTTOMLEFT", 10, 2)
-    PanelTemplates_SetNumTabs(f, 2)
-    onglet(1)
+-- Les onglets du bas, les mêmes sur les deux fenêtres (modèle : ns.onglets de Handshake) : chaque fenêtre retient sa
+-- taille ; l'onglet de l'autre fenêtre l'ouvre à la même place, et celle-ci se ferme.
+local function onglets(f)
+  f.Tabs = {}
+  for i, nom in ipairs({ "Chaînes", "Membres", "Écartées" }) do
+    local t = CreateFrame("Button", f:GetName() .. "Tab" .. i, f, "PanelTabButtonTemplate")
+    t:SetID(i)
+    t:SetText(nom)
+    t:SetScript("OnClick", function() ouvrir(i) end)
+    f.Tabs[i] = t
   end
-  CompagnieFrame:Show()
+  f.Tabs[1]:SetPoint("TOPLEFT", f, "BOTTOMLEFT", 10, 2)
+  PanelTemplates_SetNumTabs(f, 3)
+end
+
+local function fenetreMembres()
+  if CompagnieFrame then return CompagnieFrame end
+  local f = AC.Fenetre("CompagnieFrame", "Compagnie", 400, 230)
+  panneaux = {}
+  for i = 1, 2 do panneaux[i] = CreateFrame("Frame", nil, f); panneaux[i]:SetAllPoints() end
+  local largeur
+  tableau, largeur = AC.Tableau(panneaux[1], COLONNES, { name = "membres", bottom = 44 })
+  f:SetWidth(largeur + 50)
+  vide = panneaux[1]:CreateFontString("CompagnieVide", "OVERLAY", "GameFontHighlight")
+  vide:SetPoint("TOPLEFT", 14, -70)
+  vide:SetPoint("TOPRIGHT", -14, -70)
+  vide:SetJustifyH("LEFT")
+  vide:SetText("Pas de Compagnie. Dans un groupe du jeu, « Fonder » la propose à chaque personnage du groupe ; " ..
+    "elle a de 2 à 5 membres.")
+  boutonFonder = bouton(panneaux[1], "Fonder", fonder)
+  boutonQuitter = bouton(panneaux[1], "Quitter", function() ns.quitter(e, jeu) end)
+  boutonMode = bouton(f, "Mode Compagnie", basculerMode, 170, "CompagnieModeBouton")
+  boutonMode:ClearAllPoints()
+  boutonMode:SetPoint("BOTTOMRIGHT", -14, 12)
+  tableauEcartees = AC.Tableau(panneaux[2], COLONNES_ECARTEES, { name = "ecartees", bottom = 44 })
+  videEcartees = panneaux[2]:CreateFontString("CompagnieEcarteesVide", "OVERLAY", "GameFontHighlight")
+  videEcartees:SetPoint("TOPLEFT", 14, -70)
+  videEcartees:SetPoint("TOPRIGHT", -14, -70)
+  videEcartees:SetJustifyH("LEFT")
+  videEcartees:SetText("Aucune quête écartée. Pour écarter une quête : clic droit sur elle dans le suivi, la liste " ..
+    "À faire ou l'onglet Chaînes.")
+  onglets(f)
+  return f
+end
+
+-- L'onglet Chaînes (#33, #34) : l'arbre des chaînes de la zone de la Compagnie (ns.arbreDesChaines), dessiné par l'Arbre
+-- du socle ; chaque case : nom, niveau, couleur d'état (faite grisée, disponible cerclée, verrouillée terne, écartée
+-- barrée), la marque d'une quête inégale ; bulle : donneur et endroit (base des quêtes), niveau requis, zone d'un début
+-- hors zone, qui l'a faite ou prise, ce qui la bloque pour qui, à contrôler ; clic droit : le menu du suivi. Une chaîne
+-- faite ou écartée tient en une ligne : clic = déplier ; clic sur une de ses quêtes, dépliée = replier. Sans zone
+-- choisie, le message le dit (pas de toile vide).
+local dessinerChaines -- plus bas
+local arbreChaines, zoneDessinee, aControler, deplies = nil, nil, {}, {} -- deplies : les chaînes repliées que j'ai dépliées (local, jamais envoyé)
+local COULEURS = { faite = { 0.35, 0.80, 0.45 }, aRendre = { 0.35, 0.80, 0.45 }, enCours = { 0.35, 0.60, 1.00 },
+  disponible = { 1.00, 0.82, 0.00 }, verrouillee = { 0.40, 0.40, 0.40 }, niveau = { 0.90, 0.30, 0.30 },
+  ecartee = { 0.45, 0.45, 0.45 } }
+local ALPHA = { faite = 0.5, verrouillee = 0.65, ecartee = 0.6 }
+local LIBELLES = { faite = "Faite", aRendre = "À rendre", disponible = "Disponible", verrouillee = "Verrouillée", ecartee = "Écartée" }
+local function etatCase(n)
+  if n.repliee then return (n.etat == "ecartee" and "Écartée" or "Faite par tous") .. " · clic : déplier" end
+  if n.horsZone then return "Hors zone : " .. nomZone(n.horsZone) .. (n.etat == "faite" and " · faite" or "") end
+  local t = LIBELLES[n.etat] or n.etat == "niveau" and ("niveau %d requis"):format(n.requis) or nil
+  if n.etat == "enCours" and n.objectifs then
+    local c = {}
+    for i, o in ipairs(n.objectifs) do c[i] = o.fait .. "/" .. o.total end
+    t = #c > 0 and table.concat(c, ", ") or "En cours"
+  end
+  return ("Niv. %d"):format(n.niveau) .. (t and " · " .. t or "")
+end
+local function bulleCase(c)
+  local n, q = c.n, base()[c.n.quete] or {}
+  GameTooltip:SetOwner(c, "ANCHOR_RIGHT")
+  if n.repliee then
+    GameTooltip:SetText(c.nom:GetText(), 1, 1, 1)
+    GameTooltip:AddLine("Clic : déplier la chaîne", 0.6, 0.6, 0.6)
+    return GameTooltip:Show()
+  end
+  GameTooltip:SetText(titre(n.quete), 1, 1, 1)
+  if q.niveau then
+    GameTooltip:AddLine(("Niveau %d%s"):format(q.niveau, q.niveau_requis and (", requis %d"):format(q.niveau_requis) or ""), 0.8, 0.8, 0.8)
+  end
+  if q.donneur and q.donneur.nom then GameTooltip:AddLine(q.donneur.nom .. lieu(q.donneur), 0.8, 0.8, 0.8) end
+  if n.horsZone then
+    local ch = ns.chaine(base(), n.quete, e.db.zoneCompagnie and e.db.zoneCompagnie.zone)
+    GameTooltip:AddLine(("Début hors de la zone : %s, %d quête%s à commencer par « %s »."):format(nomZone(n.horsZone), #ch,
+      #ch > 1 and "s" or "", titre(ch[1])), 1, 0.82, 0, true)
+  end
+  local ig = n.inegale -- qui l'a faite ou prise (#34)
+  if ig and #ig.faites > 0 then GameTooltip:AddLine("Faite par " .. noms(ig.faites) .. ".", 1, 0.5, 0.15, true) end
+  if ig and #ig.prises > 0 then GameTooltip:AddLine("Prise par " .. noms(ig.prises) .. ".", 1, 0.5, 0.15, true) end
+  for _, b in ipairs(n.bloque or {}) do
+    local function liste(ids, sep)
+      local t = {}
+      for i, p in ipairs(ids or {}) do t[i] = "« " .. titre(p) .. " »" end
+      return table.concat(t, sep)
+    end
+    local tous, un = liste(b.prerequis, " et "), liste(b.un, " ou ")
+    local quoi = tous .. (tous ~= "" and un ~= "" and ", puis " or "") .. (un ~= "" and ((b.un[2] and "l'une de " or "") .. un) or "")
+    GameTooltip:AddLine(("Bloquée pour %s : %s."):format(noms({ b.membre }), b.niveau and "niveau " .. b.niveau
+      or "d'abord " .. quoi), 0.9, 0.3, 0.3, true)
+  end
+  if #aControler > 0 then
+    GameTooltip:AddLine("À contrôler : " .. noms(aControler) .. " (son état ne couvre pas cette zone).", 0.6, 0.6, 0.6, true)
+  end
+  if n.repliable then GameTooltip:AddLine("Clic : replier la chaîne", 0.6, 0.6, 0.6) end
+  GameTooltip:AddLine("Clic droit : écarter ou remettre, quête personnelle", 0.6, 0.6, 0.6)
+  GameTooltip:Show()
+end
+local function caseChaine(n, c)
+  if not c then
+    c = CreateFrame("Button", nil, arbreChaines.toile, "InsetFrameTemplate")
+    c:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
+    c:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    c.accent = c:CreateTexture(nil, "ARTWORK")
+    c.accent:SetPoint("TOPLEFT", 1, -1)
+    c.accent:SetPoint("BOTTOMLEFT", 1, 1)
+    c.accent:SetWidth(3)
+    c.nom = c:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    c.nom:SetPoint("TOPLEFT", 10, -7)
+    c.nom:SetPoint("RIGHT", -8, 0)
+    c.nom:SetJustifyH("LEFT")
+    c.nom:SetWordWrap(false)
+    c.sous = c:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    c.sous:SetPoint("TOPLEFT", 10, -23)
+    c.sous:SetPoint("RIGHT", -8, 0)
+    c.sous:SetJustifyH("LEFT")
+    c.sous:SetWordWrap(false)
+    c.barre = c:CreateTexture(nil, "OVERLAY") -- écartée : le nom barré
+    c.barre:SetColorTexture(0.9, 0.3, 0.3, 0.9)
+    c.barre:SetHeight(1)
+    c.barre:SetPoint("LEFT", c.nom, "LEFT", 0, 0)
+    c.cercle = CreateFrame("Frame", nil, c, "BackdropTemplate") -- disponible : cerclée
+    c.cercle:SetAllPoints()
+    c.cercle:SetBackdrop({ edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 2 })
+    c.cercle:SetBackdropBorderColor(1, 0.82, 0, 0.9)
+    c.marque = c:CreateTexture(nil, "OVERLAY") -- inégale : une pastille, la bulle dit qui
+    c.marque:SetSize(8, 8)
+    c.marque:SetPoint("TOPRIGHT", -5, -5)
+    c.marque:SetColorTexture(1, 0.5, 0.15)
+    c:SetScript("OnClick", function(self, b)
+      local n = self.n
+      if b == "RightButton" then return not n.repliee and menuEcarter(self, n.quete) end
+      if n.repliee or n.repliable then deplies[n.band] = n.repliee or nil; dessinerChaines() end
+    end)
+    c:SetScript("OnEnter", bulleCase)
+    c:SetScript("OnLeave", function() GameTooltip:Hide() end)
+  end
+  c.n = n
+  local k = COULEURS[n.etat] or COULEURS.verrouillee -- un état inconnu : terne (COULEURS.neutre n'existe pas)
+  c.accent:SetColorTexture(k[1], k[2], k[3], 0.9)
+  c.nom:SetText(n.repliee and ("%s%s — %d quête%s"):format(n.etat == "faite" and "|TInterface\\RaidFrame\\ReadyCheck-Ready:0|t " or "",
+    titre(n.quete), n.n, n.n > 1 and "s" or "") or titre(n.quete))
+  c.sous:SetText(etatCase(n))
+  c.barre:SetShown(n.etat == "ecartee")
+  c.barre:SetWidth(math.min(c.nom:GetStringWidth(), 170))
+  c.cercle:SetShown(n.etat == "disponible")
+  c.marque:SetShown(n.inegale ~= nil)
+  c:SetAlpha(ALPHA[n.etat] or 1)
+  return c
+end
+
+local dernier -- le dernier arbre calculé : redessiné tel quel pendant un redimensionnement (memes = true)
+function dessinerChaines(memes)
+  local f = CompagnieChainesFrame
+  if not (f and f:IsShown()) then return end
+  local zc = e.db.zoneCompagnie
+  f.title:SetText(zc and "Compagnie · " .. nomZone(zc.zone) or "Compagnie")
+  local a = memes and dernier
+    or arbreChaines and e.db.compagnie and zc and ns.arbreDesChaines(membresDuJeu(), e.db.ecartees, base(), zc.zone, deplies)
+  dernier = a or nil
+  local msg = not arbreChaines and "L'onglet Chaînes demande une version plus récente d'Azeroth Commune (l'Arbre) : mets le socle à jour."
+    or not e.db.compagnie and "Pas de Compagnie : fonde-la dans l'onglet Membres."
+    or not zc and "Choisis la zone de la Compagnie dans le suivi."
+    or #a.cases == 0 and "Aucune quête de " .. nomZone(zc.zone) .. " dans la base des quêtes." or nil
+  CompagnieChainesMessage:SetText(msg or "")
+  CompagnieChainesMessage:SetShown(msg ~= nil)
+  if arbreChaines then arbreChaines.zone:SetShown(msg == nil) end
+  if msg then return end
+  aControler = a.aControler
+  for _, b in ipairs(a.bandes) do
+    if b.seules then b.title = "Quêtes seules"
+    elseif b.personnelle then b.title, b.color = "Personnelle · " .. prenom(b.personnelle), { 0.64, 0.21, 0.93 }
+    else b.title, b.color = not b.repliee and titre(b.premiere) or nil, { 0.60, 0.60, 0.62 } end -- repliée : sa ligne le dit
+  end
+  -- Une zone a de longues chaînes : rétrécie pour tenir en largeur (l'Arbre), on ne lirait plus rien. Une zone
+  -- nouvellement dessinée s'ouvre à taille réelle, en haut à gauche (glisser le fond pour la parcourir, molette pour
+  -- zoomer) ; ensuite, l'échelle choisie par le joueur est gardée d'un dessin à l'autre, fenêtre agrandie comprise.
+  -- ponytail: la largeur du dessin recalculée comme l'Arbre (AzerothCommune.Arbre, Dessiner) ; à suivre s'il change.
+  local g, v, avail = AC.PlacerArbre(a.cases, a.liens, a.bandes), arbreChaines.vue, arbreChaines.zone:GetWidth()
+  if avail >= 100 then
+    local d = g.dims
+    local ecart = g.cols > 1 and math.max(d.largeur + 44, (avail - d.largeur - 2 * d.marge) / (g.cols - 1)) or 0
+    local echelle = zoneDessinee == zc.zone and v.fit * v.zoom or 1
+    if zoneDessinee ~= zc.zone then zoneDessinee, v.x, v.y = zc.zone, 0, 0 end
+    v.zoom = echelle / math.min(1, avail / (d.largeur + ecart * (g.cols - 1) + 2 * d.marge))
+  end
+  arbreChaines:Dessiner(g)
+end
+
+local function fenetreChaines()
+  if CompagnieChainesFrame then return CompagnieChainesFrame end
+  local f = AC.Fenetre("CompagnieChainesFrame", "Compagnie", 720, 420)
+  local m = f:CreateFontString("CompagnieChainesMessage", "OVERLAY", "GameFontHighlight")
+  m:SetPoint("TOPLEFT", 20, -70)
+  m:SetPoint("TOPRIGHT", -20, -70)
+  m:SetJustifyH("LEFT")
+  if AC.Arbre then
+    arbreChaines = AC.Arbre(f, { case = caseChaine })
+    arbreChaines.zone:SetPoint("TOPLEFT", 12, -28)
+    arbreChaines.zone:SetPoint("BOTTOMRIGHT", -12, 12)
+  end
+  onglets(f)
+  -- La largeur de la zone n'est connue qu'affichée : redessiné juste après (et agrandie : les étages s'étalent).
+  f:HookScript("OnShow", function() C_Timer.After(0, dessinerChaines) end)
+  f:HookScript("OnSizeChanged", function() dessinerChaines(true) end)
+  return f
+end
+
+-- Ouvrir la fenêtre de la Compagnie sur l'onglet vue (1 Chaînes, 2 Membres, 3 Écartées) ; sans vue : Chaînes, ou Membres
+-- sans Compagnie (Fonder). L'autre fenêtre, ouverte, cède sa place.
+function ouvrir(vue)
+  vue = vue or (e.db.compagnie and 1 or 2)
+  local f = vue == 1 and fenetreChaines() or fenetreMembres()
+  local autre = vue == 1 and CompagnieFrame or CompagnieChainesFrame
+  if autre and autre:IsShown() then
+    f:ClearAllPoints()
+    f:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", autre:GetLeft(), autre:GetTop())
+    autre:Hide()
+  end
+  f:Show()
+  PanelTemplates_SetTab(f, vue)
+  if vue == 1 then return dessinerChaines() end
+  for k, p in ipairs(panneaux) do p:SetShown(k == vue - 1) end
   dessiner()
 end
 
@@ -1277,6 +1485,7 @@ end
 
 function redessiner()
   if CompagnieFrame and CompagnieFrame:IsShown() then dessiner() end
+  dessinerChaines()
   majPlaques()
   dessinerSuivi()
   dessinerPetiteListe()
@@ -1573,7 +1782,7 @@ local function reglages(page, ancre)
   cb:SetChecked(e.db.accepteAuto ~= false)
   cb:SetScript("OnClick", function(self) e.db.accepteAuto = self:GetChecked() and true or false end)
 end
-AC.Regrouper({ nom = "Compagnie", dossier = "Compagnie", icone = "Interface\\Icons\\INV_Misc_Note_01", ouvrir = ouvrir,
+AC.Regrouper({ nom = "Compagnie", dossier = "Compagnie", icone = "Interface\\Icons\\INV_Misc_Note_01", ouvrir = function() ouvrir() end,
   reglages = reglages })
 
 SLASH_COMPAGNIE1 = "/compagnie"

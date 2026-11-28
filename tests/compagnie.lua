@@ -4,11 +4,11 @@
 local LEO, MIRA = "Player-1-0000ABCD", "Player-1-0000BCDE"
 -- Les champs d'un état ajoutés après le 10e, vides : APRES_ZONE, ceux après la zone de la Compagnie (#27 : mes
 -- prérequis manquants ; #23 : la liste des membres ; #6 : les origines) ; FIN, tous (#24 : la zone, puis APRES_ZONE).
-local APRES_ZONE = "###"
+local APRES_ZONE = "####"
 local FIN = "#" .. APRES_ZONE
 -- La fin de mon état, tel qu'il part dans une Compagnie (motif) : zone et prérequis vides, la liste des membres, puis
--- les origines (#6), vides.
-local MIEN = "###%d+=[^#]+#$"
+-- les rendues de la zone (#34) et les origines (#6), vides.
+local MIEN = "###%d+=[^#]+##$"
 
 local function moi() return { guid = UnitGUID("player"), nom = AzerothCommune.Personnage().nom } end
 
@@ -88,6 +88,12 @@ end
 local function fabriquer(...)
     CompagnieDB.compagnie = { id = "essai", membres = { moi(), ... } }
 end
+-- La fenêtre de la Compagnie sur l'onglet Membres (2) ou Écartées (3) : /compagnie l'ouvre sur Chaînes (#33).
+local function membres(vue)
+    SlashCmdList.COMPAGNIE("")
+    local f = CompagnieChainesFrame and CompagnieChainesFrame:IsShown() and "CompagnieChainesFrame" or "CompagnieFrame"
+    _G[f .. "Tab" .. (vue or 2)]:Click()
+end
 
 test("Compagnie se charge : /compagnie, regroupé avec le socle, la Compagnie par personnage", function()
     assertEquals("/compagnie", SLASH_COMPAGNIE1)
@@ -100,6 +106,7 @@ test("Compagnie se charge : /compagnie, regroupé avec le socle, la Compagnie pa
     local meta = C_AddOns.GetAddOnMetadata
     assertEquals("AzerothCommune", meta("Compagnie", "Dependencies"))
     assertEquals("CompagnieDB", meta("Compagnie", "SavedVariablesPerCharacter"))
+    assertType("function", AzerothCommune.Arbre) -- le socle chargé l'a
 end)
 
 test("la commande répond : sans Compagnie, la fenêtre le dit et propose de fonder", function()
@@ -113,7 +120,7 @@ end)
 
 test("la liste des membres se dessine depuis une Compagnie fabriquée : présent, absent, Retirer", function()
     fabriquer({ guid = LEO, nom = "Léo Lame" })
-    SlashCmdList.COMPAGNIE("")
+    membres()
     local l = lignes()
     assertEquals(2, #l)
     assertEquals(moi().nom, l[1].nom)
@@ -174,14 +181,14 @@ end)
 test("quitter et retirer mettent à jour la liste", function()
     fabriquer({ guid = LEO, nom = "Léo Lame" }, { guid = MIRA, nom = "Mira Feuille" })
     avecLeo(function(envoyes)
-        SlashCmdList.COMPAGNIE("")
+        membres()
         assertEquals(3, #lignes())
         dits(function() recu("Q;essai") end) -- Léo quitte
         local l = lignes()
         assertEquals(2, #l)
         assertEquals("Mira Feuille", l[2].nom)
         fabriquer({ guid = LEO, nom = "Léo Lame" }, { guid = MIRA, nom = "Mira Feuille" })
-        SlashCmdList.COMPAGNIE("")
+        membres()
         dits(function() lignes()[3].retirer:Click() end) -- je retire Mira
         assertEquals("X;essai;" .. MIRA, envoyes[#envoyes].texte)
         assertEquals(2, #lignes())
@@ -256,7 +263,7 @@ test("la Compagnie est retrouvée telle quelle après un /reload (CompagnieDB re
     CompagnieDB = { compagnie = { id = "r1", membres = { moi(), { guid = LEO, nom = "Léo Lame" } } } }
     CompagnieMessages:GetScript("OnEvent")(CompagnieMessages, "ADDON_LOADED", "Compagnie")
     CompagnieMessages:GetScript("OnEvent")(CompagnieMessages, "PLAYER_ENTERING_WORLD")
-    SlashCmdList.COMPAGNIE("")
+    membres()
     local l = lignes()
     assertEquals(2, #l)
     assertEquals("Léo Lame", l[2].nom)
@@ -425,7 +432,7 @@ test("le suivi du jeu est masqué en mode Compagnie et revient quand on l'étein
             assertTrue(ObjectiveTrackerFrame:IsShown(), "éteint : le suivi du jeu revient")
             assertTrue(not CompagnieSuiviFrame:IsShown())
             -- Le bouton de la fenêtre des membres porte l'état du mode, et le bascule.
-            SlashCmdList.COMPAGNIE("")
+            membres()
             assertTrue(contient(CompagnieModeBouton:GetText(), "non"), CompagnieModeBouton:GetText())
             CompagnieModeBouton:Click()
             assertTrue(contient(CompagnieModeBouton:GetText(), "oui"), CompagnieModeBouton:GetText())
@@ -1097,8 +1104,7 @@ test("Écarter (#21) : clic droit sur une quête du suivi ou une ligne À faire 
             ecouler(5)
             assertTrue(envoyes[#envoyes].texte:find("#1001:1:%d+:" .. moiPrenom .. ";") ~= nil, envoyes[#envoyes].texte)
             -- L'onglet Écartées : les trois, qui l'a décidé, « Remettre ».
-            SlashCmdList.COMPAGNIE("")
-            CompagnieFrameTab2:Click()
+            membres(3)
             local lg = lignes()
             assertEquals(3, #lg)
             assertEquals("Les Kobolds", lg[1].nom)
@@ -1113,7 +1119,7 @@ test("Écarter (#21) : clic droit sur une quête du suivi ou une ligne À faire 
             t = dits(function() chuchote("E;essai;5/1/1;5#1001:0:1/8###1003:0:" .. math.floor(GetServerTime() + 60) .. ":Léo#####" .. FIN) end)
             assertTrue(contient(t, "Léo a remis « Les Kobolds » dans la Compagnie."), t)
             assertEquals(1, #lignes(), "il reste les murlocs")
-            CompagnieFrameTab1:Click()
+            CompagnieFrameTab2:Click()
             assertEquals(2, #lignes(), "l'onglet Membres")
             CompagnieFrame:Hide()
         end)
@@ -1454,7 +1460,7 @@ test("zone de la Compagnie (#24) : le menu, une zone grisée sous le niveau ; ch
                     assertEquals("Zone : Bois de la Pénombre (Léo à contrôler)", CompagnieZoneBouton:GetText())
                     -- Léo choisit la Marche de l'Ouest après moi : le chat le dit, le suivi suit.
                     t = dits(function()
-                        chuchote("E;essai;1/1/1;10#1001:0#########40:" .. math.floor(GetServerTime() + 60) .. ":Léo#40##")
+                        chuchote("E;essai;1/1/1;10#1001:0#########40:" .. math.floor(GetServerTime() + 60) .. ":Léo#40###")
                     end)
                     assertTrue(contient(t, "Léo a choisi Marche de l'Ouest pour la Compagnie."), t)
                     assertEquals("Zone : Marche de l'Ouest", CompagnieZoneBouton:GetText(), "Léo l'a contrôlée : rien à contrôler")
@@ -1512,6 +1518,8 @@ test("prérequis manquant (#27) : l'écart se dessine dans À faire, sa bulle di
                         evenement("QUEST_LOG_UPDATE")
                         ecouler(5)
                         assertTrue(envoyes[#envoyes].texte:find("#148=952:940#%d+=") ~= nil, envoyes[#envoyes].texte)
+                        -- …et mes quêtes rendues de la zone (#34) : la zone couverte, rien de rendu.
+                        assertTrue(envoyes[#envoyes].texte:find("#148#$") ~= nil, envoyes[#envoyes].texte)
                     end)
                     -- Clic droit sur la ligne (inactive) : Écarter le Bosquet ; l'écart disparaît, la chaîne avec lui.
                     local racine = menuDe(function() b:GetScript("OnMouseUp")(b, "RightButton") end)
@@ -1536,7 +1544,7 @@ test("Inviter (#23) : se dessine pour un joueur du groupe non membre ; l'invitat
         avecJournal({}, function()
             fabriquer({ guid = LEO, nom = "Léo Lame" })
             CompagnieDB.compagnie.date = 1
-            SlashCmdList.COMPAGNIE("")
+            membres()
             local l = lignes(true)
             assertEquals(3, #l, "Léo, moi, et Mira du groupe")
             assertEquals("Mira Feuille", l[3].nom)
@@ -1553,7 +1561,7 @@ test("Inviter (#23) : se dessine pour un joueur du groupe non membre ; l'invitat
             assertEquals(3, #lignes(), "Mira est membre")
             -- Mon état porte la nouvelle liste (pour les absents, et pour qu'elle entre chez elle).
             ecouler(5)
-            assertTrue(envoyes[#envoyes].texte:find("Mira Feuille#$") ~= nil, envoyes[#envoyes].texte)
+            assertTrue(envoyes[#envoyes].texte:find("Mira Feuille##$") ~= nil, envoyes[#envoyes].texte)
             CompagnieFrame:Hide()
         end)
     end)
@@ -1571,7 +1579,7 @@ test("Inviter (#23) : se dessine pour un joueur du groupe non membre ; l'invitat
             local g = moi().guid:gsub("^Player%-", "")
             local t = dits(function()
                 recu("E;c1;1/1/1;10############" .. math.floor(GetServerTime()) .. "=" .. LEO:gsub("^Player%-", "") ..
-                    ":Léo Lame,1-0000BCDE:Mira Feuille," .. g .. ":" .. moi().nom .. "#")
+                    ":Léo Lame,1-0000BCDE:Mira Feuille," .. g .. ":" .. moi().nom .. "##")
             end)
             assertTrue(contient(t, "Tu entres dans la Compagnie : Léo Lame"), t)
             assertEquals("c1", CompagnieDB.compagnie.id)
@@ -1727,7 +1735,7 @@ end)
 
 test("fenêtres du socle (#31) : la Compagnie s'agrandit, colonne Membre extensible ; listes près de la minicarte sans poignée, à leur place", function()
     fabriquer({ guid = LEO, nom = "Léo Lame" })
-    SlashCmdList.COMPAGNIE("")
+    membres()
     local f = CompagnieFrame
     assertNotNil(f.ResizeButton, "la fenêtre de la Compagnie a sa poignée")
     local function celluleNom()
@@ -1742,7 +1750,7 @@ test("fenêtres du socle (#31) : la Compagnie s'agrandit, colonne Membre extensi
     end
     local avant = celluleNom():GetWidth()
     f:SetSize(f:GetWidth() + 120, f:GetHeight() + 60)
-    SlashCmdList.COMPAGNIE("") -- redessinée (dans le simulateur, OnSizeChanged n'arrive qu'à l'image suivante)
+    membres() -- redessinée (dans le simulateur, OnSizeChanged n'arrive qu'à l'image suivante)
     assertTrue(celluleNom():GetWidth() >= avant + 119, "la colonne Membre prend la largeur gagnée : " .. avant .. " → " .. celluleNom():GetWidth())
     f:Hide()
     CompagnieDB.compagnie = nil
@@ -1772,4 +1780,109 @@ test("fenêtres du socle (#31) : la Compagnie s'agrandit, colonne Membre extensi
     assertTrue(g and g.x and g.y and not g.w, "À faire : place retenue par l'en-tête")
     AzerothCommuneDB.fenetres.CompagnieSuiviFrame = nil
     AzerothCommuneDB.fenetres.CompagnieAFaireFrame = nil
+end)
+
+---------------------------------------------------------------------------------------------------
+-- L'arbre des chaînes (#33) : l'onglet Chaînes, une fenêtre à part reliée à Membres et Écartées.
+
+-- Les cases affichées de l'arbre des chaînes : { [titre] = case } (le cadre porte n, la case de ns.arbreDesChaines).
+local function casesChaines()
+    local t = {}
+    local function parcourir(f)
+        for _, c in ipairs({ f:GetChildren() }) do
+            if c.n and c.nom and c:IsVisible() then t[c.nom:GetText()] = c end
+            parcourir(c)
+        end
+    end
+    parcourir(CompagnieChainesFrame)
+    return t
+end
+local function compter(t) local n = 0 for _ in pairs(t) do n = n + 1 end return n end
+
+test("onglet Chaînes (#33, #34) : en premier, sans zone le message ; la zone dessinée, clic droit = le menu du suivi ; repli au clic ; onglets reliés, tailles à part ; « Voir les chaînes »", function()
+    NOMS_ZONES[141] = "Teldrassil"
+    local BASE = {
+        [82001] = { nom = "Les loups", zone = 12, niveau = 5, suites = { 82002 }, donneur = { nom = "Maréchal Dughan", carte = 1429, x = 42, y = 65 } },
+        [82002] = { nom = "Les peaux", zone = 12, niveau = 6, prerequis = { 82001 } },
+        [82003] = { nom = "Le colis", zone = 12, niveau = 3 },
+        [82004] = { nom = "Le message", zone = 12, niveau = 12, niveau_requis = 11, prerequis = { 940 } },
+        [940] = { nom = "Teldrassil", zone = 141, niveau = 4, suites = { 82004 } },
+    }
+    avecZones(function()
+        avecBase(BASE, function()
+            avecGroupe({}, false, function()
+                avecJournal({ { id = 82001, titre = "Les loups", objectifs = { { "Loup : 2/8", 2, 8 } } } }, function()
+                    fabriquer({ guid = LEO, nom = "Léo Lame" })
+                    CompagnieDB.modeCompagnie = nil
+                    CompagnieDB.etats = { [LEO] = { niveau = 10, rendues = {}, quetes = { [82001] = { finie = false, objectifs = { { fait = 1, total = 8 } } } } } }
+                    charger()
+                    -- Sans zone de la Compagnie : l'onglet Chaînes, en premier, dit quoi faire ; aucune case.
+                    SlashCmdList.COMPAGNIE("")
+                    assertTrue(CompagnieChainesFrame:IsShown(), "la fenêtre s'ouvre sur Chaînes")
+                    assertEquals("Chaînes", CompagnieChainesFrameTab1:GetText())
+                    assertEquals(1, PanelTemplates_GetSelectedTab(CompagnieChainesFrame))
+                    assertTrue(CompagnieChainesMessage:IsShown())
+                    assertEquals("Choisis la zone de la Compagnie dans le suivi.", CompagnieChainesMessage:GetText())
+                    assertEquals(0, compter(casesChaines()), "pas de toile vide")
+                    -- La zone choisie : ses chaînes, le début hors zone en une case, l'avancement commun.
+                    CompagnieDB.zoneCompagnie = { zone = 12, date = 1, par = "Léo" }
+                    evenement("GROUP_ROSTER_UPDATE")
+                    assertTrue(not CompagnieChainesMessage:IsShown())
+                    local c = casesChaines()
+                    assertEquals(5, compter(c), "4 quêtes de la zone et Teldrassil")
+                    assertEquals("Niv. 5 · 1/8", c["Les loups"].sous:GetText())
+                    assertEquals("Niv. 12 · niveau 11 requis", c["Le message"].sous:GetText())
+                    assertEquals("Hors zone : Teldrassil", c["Teldrassil"].sous:GetText())
+                    assertEquals("Compagnie · Forêt d'Elwynn", CompagnieChainesFrame.title:GetText())
+                    assertTrue(c["Les peaux"]:GetLeft() > c["Les loups"]:GetRight(), "la suite à droite de sa quête")
+                    -- La bulle (sans erreur Lua) : ce qui bloque, le début hors zone.
+                    local function bulle(cadre)
+                      cadre:GetScript("OnEnter")(cadre)
+                      local t = {}
+                      for i = 1, GameTooltip:NumLines() do t[#t + 1] = _G["GameTooltipTextLeft" .. i]:GetText() or "" end
+                      GameTooltip:Hide()
+                      return table.concat(t, "\n")
+                    end
+                    assertTrue(bulle(c["Le message"]):find("Bloquée pour", 1, true) ~= nil, "la bulle dit ce qui bloque")
+                    assertTrue(bulle(c["Teldrassil"]):find("Début hors de la zone", 1, true) ~= nil, "la bulle du début hors zone")
+                    -- Clic droit sur une case : le menu du suivi.
+                    local racine = menuDe(function() c["Les loups"]:Click("RightButton") end)
+                    assertEquals("Les loups", entrees(racine)[1])
+                    assertTrue(choisir(racine, "Écarter pour la Compagnie"))
+                    local _, popup = StaticPopup_Visible("COMPAGNIE_ECARTER")
+                    dits(function() popup.button1:Click() end)
+                    -- Écartée avec sa suite (#34) : la chaîne se replie en une ligne ; clic, elle se déplie ; clic sur une
+                    -- de ses quêtes, elle se replie.
+                    local ligne = casesChaines()["Les loups — 2 quêtes"]
+                    assertNotNil(ligne, "la chaîne écartée en une ligne")
+                    assertEquals("Écartée · clic : déplier", ligne.sous:GetText())
+                    assertNil(casesChaines()["Les peaux"])
+                    ligne:Click("LeftButton")
+                    assertEquals("Niv. 5 · Écartée", casesChaines()["Les loups"].sous:GetText(), "dépliée")
+                    casesChaines()["Les peaux"]:Click("LeftButton")
+                    assertNotNil(casesChaines()["Les loups — 2 quêtes"], "repliée")
+                    casesChaines()["Les loups — 2 quêtes"]:Click("LeftButton")
+                    assertTrue(choisir(menuDe(function() casesChaines()["Les loups"]:Click("RightButton") end), "Remettre dans la Compagnie"))
+                    assertEquals("Niv. 5 · 1/8", casesChaines()["Les loups"].sous:GetText(), "remise")
+                    -- Les onglets : Membres ouvre l'autre fenêtre à la même place ; chacune garde sa taille.
+                    local haut = CompagnieChainesFrame:GetTop()
+                    CompagnieChainesFrameTab2:Click()
+                    assertTrue(CompagnieFrame:IsShown() and not CompagnieChainesFrame:IsShown())
+                    assertEquals(2, PanelTemplates_GetSelectedTab(CompagnieFrame))
+                    assertEquals(math.floor(haut), math.floor(CompagnieFrame:GetTop()), "à la même place")
+                    assertTrue(CompagnieFrame:GetWidth() < CompagnieChainesFrame:GetWidth(), "tailles à part")
+                    CompagnieFrameTab3:Click()
+                    assertEquals(3, PanelTemplates_GetSelectedTab(CompagnieFrame))
+                    CompagnieFrameTab1:Click()
+                    assertTrue(CompagnieChainesFrame:IsShown() and not CompagnieFrame:IsShown(), "retour aux Chaînes")
+                    -- « Voir les chaînes » dans le menu du bouton de zone du suivi.
+                    CompagnieChainesFrame:Hide()
+                    assertTrue(choisir(menuDe(function() CompagnieZoneBouton:Click() end), "Voir les chaînes"))
+                    assertTrue(CompagnieChainesFrame:IsShown())
+                    CompagnieChainesFrame:Hide()
+                end)
+            end)
+        end)
+    end)
+    eteindre()
 end)

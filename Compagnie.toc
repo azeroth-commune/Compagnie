@@ -6,6 +6,7 @@
 ## Version: @project-version@
 ## IconTexture: Interface\Icons\INV_Misc_Note_01
 ## Dependencies: AzerothCommune
+## X-AzerothCommune: 2.0.0-beta8
 ## SavedVariablesPerCharacter: CompagnieDB
 ## X-Curse-Project-ID: 1826106
 Calcul.lua

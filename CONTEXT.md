@@ -36,6 +36,10 @@ _Avoid_: cache, copie
 
 ### Quêtes
 
+**Chaîne**:
+Des quêtes reliées par leurs prérequis et leurs suites, d'après la base des quêtes : tout ce qui se touche forme une seule chaîne, même quand deux fils se rejoignent sur une quête. Une quête sans prérequis ni suite n'est pas une chaîne : c'est une **quête seule**.
+_Avoid_: série, ligne de quêtes, questline
+
 **Écart**:
 Une différence entre les journaux de quêtes des membres, qui demande une action pour être résorbée.
 _Avoid_: désynchro, divergence
@@ -80,6 +84,14 @@ L'avancement d'une quête pour la Compagnie : celui du membre le moins avancé, 
 Écart sur un objectif d'objet échangeable (jamais lié : pas un objet de quête lié) quand la Compagnie en a assez pour que tous finissent, en comptant ce que chacun a dans ses sacs au-delà du total : chez celui qui en a de trop, « Donne 5 Patte de loup à Léo » (le clic ouvre l'échange, Léo dans le groupe) ; chez celui à qui il en manque, « Léo te donne 5 Patte de loup ». Rien tant qu'un membre n'a pas la quête, ni quand il n'y en a pas assez pour tous.
 _Avoid_: partage d'objets (« partager » est réservé aux quêtes), don
 
+**Quête disponible**:
+Une quête que la Compagnie peut commencer maintenant : tous les membres en ont fait les prérequis et ont le niveau de la prendre, personne ne l'a encore, et elle n'est pas écartée.
+_Avoid_: quête suivante, prochaine quête
+
+**Quête inégale**:
+Une quête faite ou prise par certains membres seulement ; l'affichage commun la marque et dit qui, sans compter comme un écart à lui seul.
+_Avoid_: quête désynchro
+
 **À rendre**:
 Une quête dont l'avancement commun est complet : tous les membres peuvent la rendre.
 
@@ -114,6 +126,10 @@ _Avoid_: mode groupe, mode synchro
 **À faire**:
 La liste des écarts qui demandent une action d'un membre (partager, aller voir un PNJ, se lier à l'auberge) ; visible même quand le mode Compagnie est éteint.
 _Avoid_: alertes, notifications
+
+**Arbre des chaînes**:
+L'arbre (voir la carte des contextes) des quêtes de la zone de la Compagnie, dans l'onglet « Chaînes » de la fenêtre de la Compagnie : une bande par chaîne, rangées par niveau de leur première quête, les quêtes seules en dernière bande ; chaque quête y a son état pour la Compagnie (faite par tous, à rendre, en cours, disponible, verrouillée, niveau insuffisant, écartée), inégale marquée. Une chaîne finie par tous ou écartée se replie en une ligne ; le début d'une chaîne hors de la zone tient en une case. Les quêtes qu'aucun membre ne peut prendre n'y sont pas. Il sert à choisir ensemble la suite ; il ne montre que la zone de la Compagnie.
+_Avoid_: carte des quêtes, explorateur, node map
 
 **Bandeau d'abandon**:
 Un bandeau posé au-dessus de la fenêtre d'abandon du jeu quand abandonner écarterait la quête : « Abandonner « X » l'écarte pour la Compagnie », et la suite que l'abandon coupe, d'après la base des quêtes (sans les quêtes d'une autre race ou classe). Le bouton du jeu n'est jamais touché ; pas de bandeau hors d'une Compagnie, pour une quête déjà écartée ni pour ma quête d'avant.
