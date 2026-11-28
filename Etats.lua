@@ -16,7 +16,7 @@
 -- l'ordre des objectifs ; chacun retrouve le texte dans le jeu, même pour une quête hors de son journal (Compagnie.lua).
 -- Corps encodé : « niveau[:race:classe]#quête;quête…#rendue,rendue…#zone=id,id;zone=id…#écartée;écartée…#auberge#liaison#fin
 -- #avant,avant…#renduesAvant,renduesAvant…#zone:date:par#zone=quête:prérequis,…#date=serveur-id:nom,…#zone=id,id…#origines »,
--- une quête « id:finie(0|1)[p][n][:fait/total[/stock]…] » (stock : un objet échangeable que j'ai au-delà du total, objectif fini) (p : marquée personnelle, #7 ; n : non partageable, #6 ; partageable
+-- une quête « id:finie(0|1)[p][n][:fait/total[/stock]…] » (stock : combien j'ai d'un objet échangeable, 0 compris) (p : marquée personnelle, #7 ; n : non partageable, #6 ; partageable
 -- ne part pas, le jeu ne le dit que pour mes quêtes), ids triés. Le 4e champ (#13) range les quêtes par zone (l'en-tête de zone de mon journal), zones triées ; vide si
 -- aucune quête n'a de zone. Une zone : 1 à MAX_ZONE octets, ni caractère de contrôle, ni « | » (codes du chat), ni
 -- séparateur du format ; un en-tête de mon journal qui ne l'est pas ne part pas (la quête part sans zone). Le 5e champ
@@ -137,7 +137,7 @@ function ns.encoder(etat)
     local q = etat.quetes[id]
     local t = { id, (q.finie and 1 or 0) .. (q.personnelle and "p" or "") .. (q.partageable == false and "n" or "") }
     for _, o in ipairs(q.objectifs or {}) do
-      t[#t + 1] = o.fait .. "/" .. o.total .. ((o.stock or 0) > o.total and o.fait == o.total and "/" .. o.stock or "")
+      t[#t + 1] = o.fait .. "/" .. o.total .. (o.stock and "/" .. o.stock or "")
     end
     quetes[#quetes + 1] = table.concat(t, ":")
     if zoneValide(q.zone) then zones[q.zone] = zones[q.zone] or {}; table.insert(zones[q.zone], id) end
@@ -196,7 +196,7 @@ function ns.decoder(corps, maintenant)
     for k = 3, #c do
       local a, b, s = c[k]:match("^(%d+)/(%d+)/?(%d*)$")
       a, b, s = a and entier(a, 99999), b and entier(b, 99999), s ~= "" and entier(s, 99999) or nil
-      if not (a and b) or a > b or s and (a < b or s <= b) then return end
+      if not (a and b) or a > b or s and s < a then return end
       objectifs[k - 2] = { fait = a, total = b, stock = s }
     end
     etat.quetes[id] = { finie = finie == "1", personnelle = perso == "p" or nil, objectifs = objectifs }

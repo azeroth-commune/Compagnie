@@ -124,6 +124,19 @@ function ns.calculer(membres, maintenant, ecartees, base, zone, appris)
         end
       end
     end
+    -- Un objet échangeable (stock connu chez chaque membre qui compte) : le total du groupe sur le total à faire pour
+    -- le groupe (Virgile 13, Léo 3, Mira 5 sur 8 chacun : 21/24) ; « Objets à donner » dit qui donne à qui.
+    -- ponytail: un membre sans la quête (pas rendue) : son stock est inconnu, on garde le moins avancé.
+    for i, c in ipairs(commune.objectifs) do
+      local fait, total = 0, 0
+      for _, m in ipairs(membres) do
+        local q = m.quetes and m.quetes[id]
+        local o = q and q.objectifs and q.objectifs[i]
+        if o and o.stock then fait, total = fait + o.stock, total + o.total
+        elseif q or not rendue(m, id) then total = nil; break end
+      end
+      if total and total > 0 then c.fait, c.total = math.min(fait, total), total end
+    end
   end
   local aFaire, aControler = ns.ecarts(membres, foyer, quetes, ecartees, base, zone, appris)
   return { niveau = niveau, foyer = foyer, pierre = pierre, quetes = quetes, aPart = aPart, aFaire = aFaire,
@@ -154,8 +167,7 @@ end
 -- après l'entrée (rendues, pas renduesAvant) fait une quête en avance.
 -- Rend aussi les membres à contrôler (#27) : ceux dont l'état ne couvre pas la zone de la Compagnie (absent depuis le
 -- choix, jamais entendu) ; on ne sait pas ce qui leur manque, on ne leur prête rien.
--- Objets à donner : pour un objectif d'objet échangeable (stock : ce que le membre en a dans ses sacs, envoyé seulement
--- au-delà du total), quand la Compagnie en a assez pour que tous finissent, qui donne combien à qui : un « donner » chez
+-- Objets à donner : pour un objectif d'objet échangeable (stock : ce que le membre en a dans ses sacs, 0 compris), quand la Compagnie en a assez pour que tous finissent, qui donne combien à qui : un « donner » chez
 -- celui qui en a de trop, un « recevoir » chez celui à qui il en manque. ont : les membres qui ont la quête (tous ceux
 -- qui ne l'ont pas rendue). ponytail: rien quand il n'y en a pas assez pour tous ; un partage partiel viendra si on le demande.
 local function aDonner(t, id, ont)

@@ -911,11 +911,26 @@ trois[3].rendues = nil
 c = ns.calculer(trois)
 assert(echanges(c.aFaire) == "donner:Mira:1:Léo donner:Virgile:5:Léo recevoir:Léo:5:Virgile recevoir:Léo:1:Mira",
   "deux donneurs : " .. echanges(c.aFaire))
--- Le stock part avec l'objectif fini, au-delà du total seulement ; reçu tel quel ; un stock sur un objectif pas fini, rejeté.
-local recuS = ns.decoder(ns.encoder({ niveau = 5, quetes = { [7] = stock(8, 13), [8] = stock(5, 5) }, rendues = {} }))
-assert(recuS.quetes[7].objectifs[1].stock == 13 and recuS.quetes[8].objectifs[1].stock == nil, "le stock au-delà du total")
-assert(ns.decoder("5#7:0:5/8/9#############") == nil and ns.decoder("5#7:1:8/8/8#############") == nil
-  and ns.decoder("5#7:1:8/8/9#############").quetes[7].objectifs[1].stock == 9, "stock : fini et au-delà du total")
+-- Un objet échangeable : le total du groupe sur le total à faire pour le groupe (Mira 11, Virgile 13, Léo 2 : 24/24).
+assert(c.quetes[PATTES].objectifs[1].fait == 2 and c.quetes[PATTES].objectifs[1].total == 8, "Léo sans stock : le moins avancé")
+trois[2].quetes[PATTES] = stock(2, 2)
+local o = ns.calculer(trois).quetes[PATTES].objectifs[1]
+assert(o.fait == 24 and o.total == 24, "total du groupe : " .. o.fait .. "/" .. o.total)
+trois[1].quetes[PATTES], trois[2].quetes[PATTES] = stock(3, 3), stock(0, 0)
+o = ns.calculer(trois).quetes[PATTES].objectifs[1]
+assert(o.fait == 14 and o.total == 24, "total du groupe, pas fini : " .. o.fait .. "/" .. o.total)
+trois[3].rendues, trois[3].quetes = { [PATTES] = true }, {}
+o = ns.calculer(trois).quetes[PATTES].objectifs[1]
+assert(o.fait == 3 and o.total == 16, "Mira l'a rendue : elle ne compte plus : " .. o.fait .. "/" .. o.total)
+trois[3].rendues = nil
+o = ns.calculer(trois).quetes[PATTES].objectifs[1]
+assert(o.fait == 0 and o.total == 8, "Mira sans la quête : stock inconnu, le moins avancé")
+-- Le stock part dès que l'objet s'échange (0 compris) ; reçu tel quel ; moins que le compte de l'objectif, rejeté.
+local recuS = ns.decoder(ns.encoder({ niveau = 5, quetes = { [7] = stock(8, 13), [8] = stock(5, 5), [9] = pattes(5) }, rendues = {} }))
+assert(recuS.quetes[7].objectifs[1].stock == 13 and recuS.quetes[8].objectifs[1].stock == 5
+  and recuS.quetes[9].objectifs[1].stock == nil, "le stock part tel quel")
+assert(ns.decoder("5#7:0:5/8/4#############") == nil and ns.decoder("5#7:0:0/8/0#############").quetes[7].objectifs[1].stock == 0
+  and ns.decoder("5#7:1:8/8/9#############").quetes[7].objectifs[1].stock == 9, "stock : au moins le compte")
 
 -- Le texte des objectifs n'est jamais envoyé (code de grammaire du jeu « |4… ; ») : seulement les nombres.
 local avecTexte = { niveau = 12, quetes = { [7] = { finie = false, objectifs = {

@@ -78,7 +78,7 @@ Une quête que le jeu interdit aux autres membres de prendre (classe, race, d'ap
 _Avoid_: quête solo
 
 **Avancement commun**:
-L'avancement d'une quête pour la Compagnie : celui du membre le moins avancé, absents compris.
+L'avancement d'une quête pour la Compagnie : celui du membre le moins avancé, absents compris. Pour un objectif d'objet échangeable, le total du groupe sur le total à faire pour le groupe (13 + 3 + 5 sur 3 × 8 : 21/24), quand on connaît ce que chaque membre en a ; sinon, le moins avancé.
 
 **Objets à donner**:
 Écart sur un objectif d'objet échangeable (jamais lié : pas un objet de quête lié) quand la Compagnie en a assez pour que tous finissent, en comptant ce que chacun a dans ses sacs au-delà du total : chez celui qui en a de trop, « Donne 5 Patte de loup à Léo » (le clic ouvre l'échange, Léo dans le groupe) ; chez celui à qui il en manque, « Léo te donne 5 Patte de loup ». Rien tant qu'un membre n'a pas la quête, ni quand il n'y en a pas assez pour tous.

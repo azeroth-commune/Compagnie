@@ -144,14 +144,15 @@ end
 
 local function entier(v, max) return math.min(max, math.max(0, math.floor(tonumber(v) or 0))) end
 
--- Combien j'ai, dans mes sacs, de l'objet d'un objectif (par son nom, ns.libelle), s'il s'échange ; nil sinon. Le jeu
+-- Combien j'ai, dans mes sacs, de l'objet d'un objectif (par son nom, ns.libelle), s'il s'échange ; nil sinon (ou pas
+-- encore en cache). Le jeu
 -- borne le compte d'un objectif au total : le surplus qu'un autre membre peut recevoir ne se lit que dans les sacs.
 -- ponytail: seulement un objet jamais lié (bindType 0) ; un objet de quête lié (4) ou lié quand ramassé (1) ne
 -- s'échange pas, un « lié quand équipé » est écarté par prudence.
 local function stockEchangeable(nom)
   if not nom or select(14, C_Item.GetItemInfo(nom)) ~= 0 then return nil end
   local n = C_Item.GetItemCount(nom)
-  return type(n) == "number" and n > 0 and n or nil
+  return type(n) == "number" and n or nil -- 0 compris : échangeable, pour le total du groupe
 end
 
 -- Mes prérequis manquants pour la zone de la Compagnie (#27), calculés en direct (rendue : IsQuestFlaggedCompleted ; ma
